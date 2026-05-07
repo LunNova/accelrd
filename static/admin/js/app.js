@@ -100,13 +100,23 @@
 		const cls = (v === "pass" || v === "ok") ? "ok"
 			: (v === "fail" || v === "error") ? "err"
 			: "warn";
-		// Annotate the verdict with its source tier inline so it's
-		// clear what "ok" means: a real RoCE bandwidth probe (pair), a
-		// single-node loopback ibverbs self-test, or just the preflight
-		// rollup saying the static preconditions held. Plain text inside
-		// the tag — no nested boxes.
-		const src = source && source !== "pair" ? ` · ${escapeHTML(source)}` : "";
-		return `<span class="tag ${cls}">${escapeHTML(v)}${src}</span>`;
+		// Two cases that get rendered very differently:
+		//  - preflight tier: the node has no RDMA hardware and no rxe,
+		//    so no fabric test ever ran. We collapse "ok · preflight"
+		//    to "no rdma" — the preflight outcome wasn't measuring
+		//    RDMA, it was measuring "is this GPU node otherwise sane",
+		//    so showing "ok" here would imply a fabric test. Preserve
+		//    fail/warn distinctly so a degraded preflight still pops.
+		//  - pair / loopback tier: a real ibverbs probe ran. Tag the
+		//    pill with `· rdma` so it's visibly distinct from the
+		//    preflight-only nodes at a glance.
+		let text;
+		if (source === "preflight") {
+			text = (v === "ok" || v === "pass") ? "no rdma" : `${v} · no rdma`;
+		} else {
+			text = `${v} · rdma`;
+		}
+		return `<span class="tag ${cls}">${escapeHTML(text)}</span>`;
 	}
 
 	function isFailVerdict(v) {
@@ -205,7 +215,6 @@
 		const f = fleet.fleet || {};
 		cells.push(
 			stat("vram", memPair(f.vram_used_bytes, f.vram_total_bytes)),
-			stat("uma", memPair(f.uma_used_bytes, f.uma_total_bytes)),
 			stat("ram avl", fmtBytesShort(f.ram_available_bytes)),
 			stat("disk free", fmtBytesShort(f.disk_free_bytes)),
 			stat("power", fmtPower(f.power_watts || 0)),

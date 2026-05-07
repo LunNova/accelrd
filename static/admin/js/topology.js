@@ -61,13 +61,14 @@
 		const p = node.last_probe;
 		if (!p) return "untested";
 		const v = p.verdict || "untested";
-		// Annotate the source so it's clear what "ok" means: was it a
-		// real RoCE bandwidth probe, a loopback self-test, or just the
-		// preflight rollup saying "we checked the static preconditions"?
-		const src = p.source;
-		if (src === "preflight") return `${v} · preflight`;
-		if (src === "loopback") return `${v} · loopback`;
-		return v;
+		// Mirror the cluster-table treatment: preflight-only nodes
+		// (no RDMA hardware, no rxe) read as "no rdma" because the
+		// preflight wasn't a fabric test. Pair / loopback get tagged
+		// `· rdma` so the eye can pick out where a real verbs probe ran.
+		if (p.source === "preflight") {
+			return (v === "ok" || v === "pass") ? "no rdma" : `${v} · no rdma`;
+		}
+		return `${v} · rdma`;
 	}
 
 	function chip(x, y, label, count) {

@@ -252,26 +252,38 @@ a:hover { text-decoration: underline; }
 
 /* Scavenge-parts action: shown next to a failed verdict. Half-serious
    easter egg — links to an eBay search seeded from the node's GPU/NIC
-   labels. Styled like a terminal command, not a CTA. */
+   labels. Bigger and angrier than a normal button so a failed node is
+   obvious from across the room: red border, blocky display so it sits
+   on its own line under the verdict pill, slight pulse on hover. */
 .scavenge-btn {
-	display: inline-block;
-	margin-left: 6px;
-	padding: 0 6px;
+	display: block;
+	margin: 4px 0 0;
+	padding: 2px 10px;
 	font-family: var(--font-mono);
-	font-size: 0.7rem;
+	font-size: 0.78rem;
 	font-weight: 700;
 	text-transform: uppercase;
-	letter-spacing: 0.05em;
-	border: 1px solid var(--warning);
-	background: transparent;
-	color: var(--warning);
+	letter-spacing: 0.08em;
+	border: 1px solid var(--error);
+	background: rgba(236, 95, 103, 0.08);
+	color: var(--error);
 	cursor: pointer;
-	transition: background 0.15s, color 0.15s;
+	transition: background 0.15s, color 0.15s, transform 0.1s;
+	white-space: nowrap;
+}
+.scavenge-btn::before {
+	content: "[ ";
+	opacity: 0.6;
+}
+.scavenge-btn::after {
+	content: " ]";
+	opacity: 0.6;
 }
 .scavenge-btn:hover {
-	background: var(--warning);
+	background: var(--error);
 	color: var(--bg-primary);
 	text-decoration: none;
+	transform: translateX(1px);
 }
 
 /* Topology canvas */

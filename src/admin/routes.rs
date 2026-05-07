@@ -135,6 +135,8 @@ struct ProbeRow {
 	partner: Option<String>,
 	verdict: Option<String>,
 	source: VerdictSource,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	reason: Option<String>,
 }
 
 async fn probes(State(state): State<AppState>) -> Result<Json<ProbesResponse>, ApiError> {
@@ -151,6 +153,7 @@ async fn probes(State(state): State<AppState>) -> Result<Json<ProbesResponse>, A
 				partner: p.partner,
 				verdict: p.verdict,
 				source: p.source,
+				reason: p.reason,
 			})
 		})
 		.collect();

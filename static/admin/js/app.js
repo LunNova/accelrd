@@ -95,10 +95,11 @@
 		return `${Math.floor(delta / 86400)}d ago`;
 	}
 
-	function verdictTag(v, source) {
+	function verdictTag(v, source, reason) {
 		if (!v) return `<span class="tag">untested</span>`;
 		const cls = (v === "pass" || v === "ok") ? "ok"
 			: (v === "fail" || v === "error") ? "err"
+			: (v === "degraded") ? "err"
 			: "warn";
 		// Two cases that get rendered very differently:
 		//  - preflight tier: the node has no RDMA hardware and no rxe,
@@ -116,7 +117,14 @@
 		} else {
 			text = `${v} · rdma`;
 		}
-		return `<span class="tag ${cls}">${escapeHTML(text)}</span>`;
+		// Reason text is the prober's `last-{rack,loopback}-reason`
+		// (a one-line error string) or the daemon's
+		// `accel-ready.lunnova.dev/failed` (comma-separated check
+		// names). Surface as a `title=` tooltip — visible on hover,
+		// invisible otherwise, so the dense table layout doesn't grow.
+		const tip = reason ? ` title="${escapeHTML(reason)}"` : "";
+		const cursor = reason ? ' style="cursor: help;"' : "";
+		return `<span class="tag ${cls}"${tip}${cursor}>${escapeHTML(text)}</span>`;
 	}
 
 	function isFailVerdict(v) {
@@ -246,7 +254,13 @@
 		let v = Math.abs(n);
 		while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
 		const sign = n < 0 ? "-" : "";
-		return `${sign}${v.toFixed(v >= 100 ? 0 : v >= 10 ? 1 : 2)} ${units[i]}`;
+		// Tighter than the canonical OTel display so we can fit more
+		// columns in the cluster table: 0 decimals once we're at >=10
+		// in any unit (the quantity is meaningful enough), 1 decimal
+		// only for sub-10 values (where a trailing digit actually
+		// distinguishes "5.3 GiB" from "5 GiB"). Drop the unit space.
+		const fixed = v >= 10 ? 0 : 1;
+		return `${sign}${v.toFixed(fixed)}${units[i]}`;
 	}
 
 	/// Single-letter byte units for the status strip ("23G", "1.2T") —
@@ -326,7 +340,7 @@
 			<td class="mono ${tempClass}">${m.temp_c == null ? "—" : `${m.temp_c.toFixed(0)}°C`}</td>
 			<td class="mono">${fmtPercent(m.utilization)}</td>
 			<td>${escapeHTML(fmtRelative(probe.at))}</td>
-			<td>${verdictTag(probe.verdict, probe.source)}${isFailVerdict(probe.verdict) ? scavengeLink(n) : ""}</td>
+			<td>${verdictTag(probe.verdict, probe.source, probe.reason)}${isFailVerdict(probe.verdict) ? scavengeLink(n) : ""}</td>
 			<td>${status}${sched}</td>
 		</tr>`;
 	}
@@ -353,7 +367,7 @@
 				<td class="mono">${escapeHTML(p.partner || "—")}</td>
 				<td>${escapeHTML(p.rack || "—")}</td>
 				<td class="mono">${p.bandwidth_gbps == null ? "—" : p.bandwidth_gbps.toFixed(2)}</td>
-				<td>${verdictTag(p.verdict, p.source)}</td>
+				<td>${verdictTag(p.verdict, p.source, p.reason)}</td>
 			</tr>`).join("");
 		} catch (e) {
 			tbody.innerHTML = `<tr><td colspan="6" class="placeholder">${escapeHTML(e.message)}</td></tr>`;

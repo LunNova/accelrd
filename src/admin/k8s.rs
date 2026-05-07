@@ -59,6 +59,12 @@ pub struct ProbeRecord {
 	pub partner: Option<String>,
 	pub verdict: Option<String>,
 	pub source: VerdictSource,
+	/// Short human-readable reason for fail/timeout verdicts. Populated
+	/// from the prober's `last-{rack,loopback}-reason` annotation, or
+	/// from the daemon's `accel-ready.lunnova.dev/failed` (a
+	/// comma-separated list of failing check names) for the preflight
+	/// tier. Drives the tooltip + topology-card detail line.
+	pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -73,6 +79,10 @@ impl ProbeRecord {
 	fn is_empty(&self) -> bool {
 		self.at.is_none() && self.bandwidth_gbps.is_none() && self.partner.is_none() && self.verdict.is_none()
 	}
+}
+
+fn read_optional(annotations: &BTreeMap<String, String>, key: &str) -> Option<String> {
+	annotations.get(key).cloned().filter(|s| !s.is_empty())
 }
 
 #[derive(Debug, Serialize)]
@@ -227,27 +237,28 @@ fn resolve_verdict(annotations: &BTreeMap<String, String>, labels: &BTreeMap<Str
 
 fn read_pair(annotations: &BTreeMap<String, String>) -> Option<ProbeRecord> {
 	let r = ProbeRecord {
-		at: annotations.get("accel-test.lunnova.dev/last-rack-at").cloned(),
+		at: read_optional(annotations, "accel-test.lunnova.dev/last-rack-at"),
 		bandwidth_gbps: annotations
 			.get("accel-test.lunnova.dev/last-rack-bw-gbps")
 			.and_then(|v| v.parse().ok()),
-		partner: annotations.get("accel-test.lunnova.dev/last-rack-partner").cloned(),
-		verdict: annotations.get("accel-test.lunnova.dev/last-rack-verdict").cloned(),
+		partner: read_optional(annotations, "accel-test.lunnova.dev/last-rack-partner"),
+		verdict: read_optional(annotations, "accel-test.lunnova.dev/last-rack-verdict"),
 		source: VerdictSource::Pair,
+		reason: read_optional(annotations, "accel-test.lunnova.dev/last-rack-reason"),
 	};
 	if r.is_empty() { None } else { Some(r) }
 }
 
 fn read_loopback(annotations: &BTreeMap<String, String>) -> Option<ProbeRecord> {
 	let r = ProbeRecord {
-		at: annotations.get("accel-test.lunnova.dev/last-loopback-at").cloned(),
+		at: read_optional(annotations, "accel-test.lunnova.dev/last-loopback-at"),
 		bandwidth_gbps: annotations
 			.get("accel-test.lunnova.dev/last-loopback-bw-gbps")
 			.and_then(|v| v.parse().ok()),
-		// Loopback has no partner — it's the same node.
 		partner: None,
-		verdict: annotations.get("accel-test.lunnova.dev/last-loopback-verdict").cloned(),
+		verdict: read_optional(annotations, "accel-test.lunnova.dev/last-loopback-verdict"),
 		source: VerdictSource::Loopback,
+		reason: read_optional(annotations, "accel-test.lunnova.dev/last-loopback-reason"),
 	};
 	if r.is_empty() { None } else { Some(r) }
 }
@@ -255,7 +266,10 @@ fn read_loopback(annotations: &BTreeMap<String, String>) -> Option<ProbeRecord> 
 /// Preflight rollup from the daemon's `accel-ready.lunnova.dev/inference`
 /// label. Doesn't carry bandwidth (no test was run); the verdict here is
 /// "we checked the static + sysfs preconditions and they passed", which
-/// is the right signal for non-RDMA GPU nodes.
+/// is the right signal for non-RDMA GPU nodes. The `reason` for a
+/// degraded preflight comes from `accel-ready.lunnova.dev/failed` —
+/// a comma-separated list of failing check names like
+/// `host.disk.free,temperature.below_throttle@1`.
 fn read_preflight(labels: &BTreeMap<String, String>, annotations: &BTreeMap<String, String>) -> Option<ProbeRecord> {
 	let inference = labels.get("accel-ready.lunnova.dev/inference")?;
 	let verdict = match inference.as_str() {
@@ -263,12 +277,14 @@ fn read_preflight(labels: &BTreeMap<String, String>, annotations: &BTreeMap<Stri
 		"false" => Some("fail".to_string()),
 		other => Some(other.to_string()),
 	};
+	let reason = read_optional(annotations, "accel-ready.lunnova.dev/failed");
 	Some(ProbeRecord {
-		at: annotations.get("accel-ready.lunnova.dev/last-check").cloned(),
+		at: read_optional(annotations, "accel-ready.lunnova.dev/last-check"),
 		bandwidth_gbps: None,
 		partner: None,
 		verdict,
 		source: VerdictSource::Preflight,
+		reason,
 	})
 }
 

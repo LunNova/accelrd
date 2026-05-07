@@ -178,33 +178,62 @@
 			"font-size": 10, fill: "#a7adba",
 		}, [m.utilization == null ? "— %" : `${m.utilization.toFixed(0)}%`]));
 
-		// Memory bar at bottom.
-		const bar_y = 92;
-		const bar_w = COL_W - 24;
-		g.appendChild(el("rect", {
-			x: 12, y: bar_y, width: bar_w, height: 8, rx: 2,
-			fill: "#1a2456", stroke: "#2d1b5e",
-		}));
-		// Accelerator memory pressure bar. RAM stays out of this view —
-		// the topology cards visualize per-card memory, not host RAM.
-		const memTotal = m.mem_total_bytes || 0;
-		const memUsed = m.mem_used_bytes || 0;
-		if (memTotal > 0) {
-			const frac = Math.max(0, Math.min(1, memUsed / memTotal));
-			g.appendChild(el("rect", {
-				x: 12, y: bar_y, width: bar_w * frac, height: 8, rx: 2,
-				fill: frac >= 0.9 ? "#ec5f67" : frac >= 0.75 ? "#fac863" : "#3bb1bc",
-			}));
-			const label = `${fmtBytes(memUsed)} / ${fmtBytes(memTotal)}`;
+		// Bottom row: memory pressure bar for healthy nodes, fail
+		// reason text for degraded/failed ones. The reason is the more
+		// load-bearing signal when something's broken — memory pressure
+		// on a node that's already failed isn't actionable. We swap the
+		// real estate accordingly.
+		const probe = node.last_probe || {};
+		const reason = probe.reason;
+		const isFail = probe.verdict === "fail" || probe.verdict === "error" || probe.verdict === "degraded";
+		if (reason && isFail) {
 			g.appendChild(el("text", {
-				x: COL_W - 12, y: bar_y - 1,
-				"text-anchor": "end",
+				x: 12, y: 99,
 				"font-family": "SF Mono, Cascadia Code, monospace",
-				"font-size": 9, fill: "#65737e",
-			}, [label]));
+				"font-size": 9, fill: "#ec5f67",
+			}, [truncate(reason, 38)]));
+		} else {
+			const bar_y = 92;
+			const bar_w = COL_W - 24;
+			g.appendChild(el("rect", {
+				x: 12, y: bar_y, width: bar_w, height: 8, rx: 2,
+				fill: "#1a2456", stroke: "#2d1b5e",
+			}));
+			// Accelerator memory pressure bar. RAM stays out of this
+			// view — the topology cards visualize per-card memory, not
+			// host RAM.
+			const memTotal = m.mem_total_bytes || 0;
+			const memUsed = m.mem_used_bytes || 0;
+			if (memTotal > 0) {
+				const frac = Math.max(0, Math.min(1, memUsed / memTotal));
+				g.appendChild(el("rect", {
+					x: 12, y: bar_y, width: bar_w * frac, height: 8, rx: 2,
+					fill: frac >= 0.9 ? "#ec5f67" : frac >= 0.75 ? "#fac863" : "#3bb1bc",
+				}));
+				const label = `${fmtBytes(memUsed)} / ${fmtBytes(memTotal)}`;
+				g.appendChild(el("text", {
+					x: COL_W - 12, y: bar_y - 1,
+					"text-anchor": "end",
+					"font-family": "SF Mono, Cascadia Code, monospace",
+					"font-size": 9, fill: "#65737e",
+				}, [label]));
+			}
 		}
 
+		// SVG <title> renders as a browser tooltip on hover. Carries the
+		// full reason (un-truncated) plus the verdict/source so an
+		// operator can see why a node is degraded without leaving the
+		// topology view.
+		const tipParts = [`${node.name}: ${verdictLabel(node)}`];
+		if (reason) tipParts.push(reason);
+		g.appendChild(el("title", {}, [tipParts.join("\n")]));
+
 		return g;
+	}
+
+	function truncate(s, n) {
+		s = String(s || "");
+		return s.length <= n ? s : s.slice(0, n - 1) + "…";
 	}
 
 	function renderRackHeader(label, x, y, w) {

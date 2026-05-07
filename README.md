@@ -1,3 +1,9 @@
+messing around with k8s & accelerator health in my lab, heavily clauded.
+
+this is unlikely to ever be prod software.
+
+---
+
 # accelrd
 
 Vendor-neutral GPU/accelerator readiness daemon. Designed to run as a

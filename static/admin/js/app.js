@@ -157,12 +157,12 @@
 			fleetRow.innerHTML = renderFleetCards(fleet);
 
 			if (nodes.length === 0) {
-				tbody.innerHTML = `<tr><td colspan="11" class="placeholder">No nodes (k8s disabled or empty cluster)</td></tr>`;
+				tbody.innerHTML = `<tr><td colspan="14" class="placeholder">No nodes (k8s disabled or empty cluster)</td></tr>`;
 			} else {
 				tbody.innerHTML = nodes.map((n) => nodeRow(n, fleet.by_node && fleet.by_node[n.name])).join("");
 			}
 		} catch (e) {
-			tbody.innerHTML = `<tr><td colspan="11" class="placeholder">${escapeHTML(e.message)}</td></tr>`;
+			tbody.innerHTML = `<tr><td colspan="14" class="placeholder">${escapeHTML(e.message)}</td></tr>`;
 		}
 	}
 
@@ -172,13 +172,20 @@
 				fleet && fleet.error ? `mutel: ${truncate(fleet.error, 60)}` : "mutel unavailable");
 		}
 		const f = fleet.fleet || {};
-		const memUsed = f.memory_used_bytes || 0;
-		const memTotal = f.memory_total_bytes || 0;
-		const memSub = memTotal > 0
-			? `${fmtBytes(memUsed)} / ${fmtBytes(memTotal)} (${(memUsed / memTotal * 100).toFixed(0)}%)`
-			: fmtBytes(memUsed);
+		const vramSub = f.vram_total_bytes > 0
+			? `${fmtBytes(f.vram_used_bytes || 0)} / ${fmtBytes(f.vram_total_bytes)} discrete`
+			: "no discrete cards";
+		const umaSub = f.uma_total_bytes > 0
+			? `${fmtBytes(f.uma_used_bytes || 0)} / ${fmtBytes(f.uma_total_bytes)} unified pool`
+			: "no APUs / iGPUs";
+		const ramSub = f.ram_total_bytes > 0
+			? `${fmtBytes(f.ram_available_bytes || 0)} / ${fmtBytes(f.ram_total_bytes)} available`
+			: "host RAM unknown";
 		return [
-			summaryCard("Fleet memory", fmtBytes(memUsed), memSub),
+			summaryCard("VRAM (dedicated)", fmtBytes(f.vram_total_bytes || 0), vramSub),
+			summaryCard("UMA (unified)", fmtBytes(f.uma_total_bytes || 0), umaSub),
+			summaryCard("RAM available", fmtBytes(f.ram_available_bytes || 0), ramSub),
+			summaryCard("Disk free", fmtBytes(f.disk_free_bytes || 0), "sum of largest mounts"),
 			summaryCard("Fleet power", fmtPower(f.power_watts || 0), `over ${f.nodes_with_data || 0} nodes`),
 			summaryCard("Hottest accelerator", f.max_temp_c == null ? "—" : `${f.max_temp_c.toFixed(0)}°C`, "max across fleet"),
 			summaryCard("Avg utilization", f.avg_utilization == null ? "—" : `${f.avg_utilization.toFixed(0)}%`, "mean per-node avg"),
@@ -238,9 +245,6 @@
 		const sched = n.schedulable ? "" : ` <span class="pill warn">cordoned</span>`;
 		const probe = n.last_probe || {};
 		const m = live || {};
-		const memCell = (m.memory_used_bytes != null && m.memory_total_bytes)
-			? `${fmtBytes(m.memory_used_bytes)} <span class="dim">/ ${fmtBytes(m.memory_total_bytes)}</span>`
-			: (m.memory_used_bytes != null ? fmtBytes(m.memory_used_bytes) : "—");
 		const tempClass = m.temp_c == null ? ""
 			: m.temp_c >= 90 ? "verdict-fail"
 			: m.temp_c >= 80 ? "verdict-untested" /* warning hue */
@@ -250,7 +254,10 @@
 			<td>${escapeHTML(n.rack || "—")}</td>
 			<td>${fmtNum(n.total_accelerators)}</td>
 			<td class="mono">${escapeHTML(fmtVendors(n.vendor_counts))}</td>
-			<td class="mono">${memCell}</td>
+			<td class="mono">${memCell(m.vram_used_bytes, m.vram_total_bytes)}</td>
+			<td class="mono">${memCell(m.uma_used_bytes, m.uma_total_bytes)}</td>
+			<td class="mono">${memCell(m.ram_available_bytes, m.ram_total_bytes, "/")}</td>
+			<td class="mono">${memCell(m.disk_free_bytes, m.disk_total_bytes, "/")}</td>
 			<td class="mono">${fmtPower(m.power_watts)}</td>
 			<td class="mono ${tempClass}">${m.temp_c == null ? "—" : `${m.temp_c.toFixed(0)}°C`}</td>
 			<td class="mono">${fmtPercent(m.utilization)}</td>
@@ -258,6 +265,14 @@
 			<td>${verdictPill(probe.verdict)}</td>
 			<td>${status}${sched}</td>
 		</tr>`;
+	}
+
+	/// "primary / total" cell. Returns "—" when both are missing; the
+	/// total goes in the dim styling so the primary number reads cleanly.
+	function memCell(primary, total) {
+		if (primary == null && (total == null || !total)) return "—";
+		if (total == null || !total) return fmtBytes(primary);
+		return `${fmtBytes(primary || 0)} <span class="dim">/ ${fmtBytes(total)}</span>`;
 	}
 
 	async function renderProbes(force) {

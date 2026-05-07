@@ -177,9 +177,21 @@ struct FleetResponse {
 #[derive(Serialize, Default)]
 struct NodeFleetMetrics {
 	#[serde(skip_serializing_if = "Option::is_none")]
-	memory_used_bytes: Option<f64>,
+	vram_used_bytes: Option<f64>,
 	#[serde(skip_serializing_if = "Option::is_none")]
-	memory_total_bytes: Option<f64>,
+	vram_total_bytes: Option<f64>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	uma_used_bytes: Option<f64>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	uma_total_bytes: Option<f64>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	ram_total_bytes: Option<f64>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	ram_available_bytes: Option<f64>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	disk_free_bytes: Option<f64>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	disk_total_bytes: Option<f64>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	power_watts: Option<f64>,
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -190,8 +202,13 @@ struct NodeFleetMetrics {
 
 #[derive(Serialize, Default)]
 struct FleetTotals {
-	memory_used_bytes: f64,
-	memory_total_bytes: f64,
+	vram_used_bytes: f64,
+	vram_total_bytes: f64,
+	uma_used_bytes: f64,
+	uma_total_bytes: f64,
+	ram_total_bytes: f64,
+	ram_available_bytes: f64,
+	disk_free_bytes: f64,
 	power_watts: f64,
 	max_temp_c: Option<f64>,
 	avg_utilization: Option<f64>,
@@ -199,19 +216,40 @@ struct FleetTotals {
 }
 
 async fn fleet(State(state): State<AppState>) -> Json<FleetResponse> {
-	// VRAM (AMD/NVIDIA dedicated) is the most common case. We fall back
-	// to `accel.memory.dedicated.total` for the total because Intel and
-	// some NVIDIA paths emit there. Sum across accelerators per node by
-	// asking mutel to aggregate with `sum`.
-	let vram_used = state
+	// Memory split: VRAM = dedicated discrete-GPU memory; UMA = unified
+	// memory the accelerator addresses (APU HBM, iGPU GTT slice); RAM =
+	// host system memory; DISK = largest real mount free. The old
+	// `accel.memory.vram.*` family conflated these — discrete VRAM and
+	// APU UMA both flowed through one aggregate, hiding the difference
+	// between "this node has 64 GiB of HBM" and "this node has 192 GiB
+	// of unified-memory carving across 6 APUs."
+	let dedicated_used = state
 		.mutel
-		.latest_by_node("accel.memory.vram.used", "sum", FLEET_WINDOW_SECS);
-	let vram_total = state
-		.mutel
-		.latest_by_node("accel.memory.vram.total", "sum", FLEET_WINDOW_SECS);
+		.latest_by_node("accel.memory.dedicated.used", "sum", FLEET_WINDOW_SECS);
 	let dedicated_total = state
 		.mutel
 		.latest_by_node("accel.memory.dedicated.total", "sum", FLEET_WINDOW_SECS);
+	let unified_used = state
+		.mutel
+		.latest_by_node("accel.memory.unified.used", "sum", FLEET_WINDOW_SECS);
+	let unified_total = state
+		.mutel
+		.latest_by_node("accel.memory.unified.total", "sum", FLEET_WINDOW_SECS);
+	let ram_total = state
+		.mutel
+		.latest_by_node("host.memory.total_bytes", "max", FLEET_WINDOW_SECS);
+	let ram_avail = state
+		.mutel
+		.latest_by_node("host.memory.available_bytes", "max", FLEET_WINDOW_SECS);
+	// Disk: take the largest mount per node. mutel's `max` aggregator
+	// across the per-mount series gives us "biggest disk on the node",
+	// which is the workload-relevant figure.
+	let disk_free = state
+		.mutel
+		.latest_by_node("host.disk.free_bytes", "max", FLEET_WINDOW_SECS);
+	let disk_total = state
+		.mutel
+		.latest_by_node("host.disk.total_bytes", "max", FLEET_WINDOW_SECS);
 	let power = state
 		.mutel
 		.latest_by_node("accel.power.usage", "sum", FLEET_WINDOW_SECS);
@@ -222,7 +260,19 @@ async fn fleet(State(state): State<AppState>) -> Json<FleetResponse> {
 		.mutel
 		.latest_by_node("accel.utilization", "avg", FLEET_WINDOW_SECS);
 
-	let (used, vtotal, dtotal, pw, tmp, ut) = tokio::join!(vram_used, vram_total, dedicated_total, power, temp, util);
+	let (du, dt, uu, ut_, rt, ra, df, dtot, pw, tmp, util_) = tokio::join!(
+		dedicated_used,
+		dedicated_total,
+		unified_used,
+		unified_total,
+		ram_total,
+		ram_avail,
+		disk_free,
+		disk_total,
+		power,
+		temp,
+		util
+	);
 
 	// First failure wins: if mutel is unreachable we mark the whole
 	// payload as unavailable but still return zeroed structure so the
@@ -239,26 +289,28 @@ async fn fleet(State(state): State<AppState>) -> Json<FleetResponse> {
 			}
 		}
 	};
-	let mut used = pick(used);
-	let vtotal = pick(vtotal);
-	let dtotal = pick(dtotal);
+	let du = pick(du);
+	let dt = pick(dt);
+	let uu = pick(uu);
+	let ut_ = pick(ut_);
+	let rt = pick(rt);
+	let ra = pick(ra);
+	let df = pick(df);
+	let dtot = pick(dtot);
 	let pw = pick(pw);
 	let tmp = pick(tmp);
-	let ut = pick(ut);
+	let util_ = pick(util_);
 
-	// Choose total per node: prefer vram.total, fall back to dedicated.total.
-	let mut total: BTreeMap<String, f64> = vtotal;
-	for (k, v) in dtotal {
-		total.entry(k).or_insert(v);
-	}
-
-	// Union of node names across all metrics so partial-data nodes still appear.
 	let mut nodes: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-	nodes.extend(used.keys().cloned());
-	nodes.extend(total.keys().cloned());
-	nodes.extend(pw.keys().cloned());
-	nodes.extend(tmp.keys().cloned());
-	nodes.extend(ut.keys().cloned());
+	for k in du.keys().chain(dt.keys()).chain(uu.keys()).chain(ut_.keys()) {
+		nodes.insert(k.clone());
+	}
+	for k in rt.keys().chain(ra.keys()).chain(df.keys()).chain(dtot.keys()) {
+		nodes.insert(k.clone());
+	}
+	for k in pw.keys().chain(tmp.keys()).chain(util_.keys()) {
+		nodes.insert(k.clone());
+	}
 
 	let mut by_node: BTreeMap<String, NodeFleetMetrics> = BTreeMap::new();
 	let mut totals = FleetTotals::default();
@@ -267,17 +319,38 @@ async fn fleet(State(state): State<AppState>) -> Json<FleetResponse> {
 
 	for node in nodes {
 		let m = NodeFleetMetrics {
-			memory_used_bytes: used.remove(&node),
-			memory_total_bytes: total.get(&node).copied(),
+			vram_used_bytes: du.get(&node).copied(),
+			vram_total_bytes: dt.get(&node).copied(),
+			uma_used_bytes: uu.get(&node).copied(),
+			uma_total_bytes: ut_.get(&node).copied(),
+			ram_total_bytes: rt.get(&node).copied(),
+			ram_available_bytes: ra.get(&node).copied(),
+			disk_free_bytes: df.get(&node).copied(),
+			disk_total_bytes: dtot.get(&node).copied(),
 			power_watts: pw.get(&node).copied(),
 			temp_c: tmp.get(&node).copied(),
-			utilization: ut.get(&node).copied(),
+			utilization: util_.get(&node).copied(),
 		};
-		if let Some(v) = m.memory_used_bytes {
-			totals.memory_used_bytes += v;
+		if let Some(v) = m.vram_used_bytes {
+			totals.vram_used_bytes += v;
 		}
-		if let Some(v) = m.memory_total_bytes {
-			totals.memory_total_bytes += v;
+		if let Some(v) = m.vram_total_bytes {
+			totals.vram_total_bytes += v;
+		}
+		if let Some(v) = m.uma_used_bytes {
+			totals.uma_used_bytes += v;
+		}
+		if let Some(v) = m.uma_total_bytes {
+			totals.uma_total_bytes += v;
+		}
+		if let Some(v) = m.ram_total_bytes {
+			totals.ram_total_bytes += v;
+		}
+		if let Some(v) = m.ram_available_bytes {
+			totals.ram_available_bytes += v;
+		}
+		if let Some(v) = m.disk_free_bytes {
+			totals.disk_free_bytes += v;
 		}
 		if let Some(v) = m.power_watts {
 			totals.power_watts += v;

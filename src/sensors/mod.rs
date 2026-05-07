@@ -8,6 +8,7 @@
 
 pub mod amd;
 pub mod common;
+pub mod host;
 pub mod intel;
 pub mod nvidia;
 

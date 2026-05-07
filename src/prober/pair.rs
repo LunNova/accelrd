@@ -21,6 +21,8 @@ use k8s_openapi::api::core::v1::Node;
 use crate::prober::ANN_LAST_AT;
 
 const RACK_LABEL: &str = "accel-topo.lunnova.dev/rack";
+const RDMA_LABEL: &str = "accel-net.lunnova.dev/rdma";
+const RDMA_PRESENT: &str = "present";
 const NODE_READY_TYPE: &str = "Ready";
 const NODE_READY_STATUS: &str = "True";
 
@@ -82,7 +84,14 @@ pub fn pick_pair<'a>(members: &'a [NodeView], cadence_cutoff_rfc3339: &str) -> O
 impl NodeView {
 	fn from_node(n: &Node) -> Option<Self> {
 		let name = n.metadata.name.clone()?;
-		let rack = n.metadata.labels.as_ref()?.get(RACK_LABEL)?.clone();
+		let labels = n.metadata.labels.as_ref()?;
+		let rack = labels.get(RACK_LABEL)?.clone();
+		// Skip nodes without active RoCE — they share a rack only via
+		// the management Ethernet interface; pairing them with an
+		// RDMA-capable peer would just produce a guaranteed-fail probe.
+		if labels.get(RDMA_LABEL).map(String::as_str) != Some(RDMA_PRESENT) {
+			return None;
+		}
 		let internal_ip = n
 			.status
 			.as_ref()

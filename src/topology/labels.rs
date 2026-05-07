@@ -124,6 +124,25 @@ pub fn build(topology: &NodeTopology, accelerators: &[Accelerator]) -> LabelSet 
 		set.annotations.insert("accel.lunnova.dev/fabric-graph".into(), s);
 	}
 
+	// RDMA presence. Only nodes with `accel-net.lunnova.dev/rdma=present`
+	// are eligible for the prober's RoCE bandwidth pair test — we
+	// require an ACTIVE Ethernet-link-layer port on at least one
+	// /sys/class/infiniband device. Without this gating, a non-RDMA
+	// node sharing a TOR with RDMA-capable peers would be picked into a
+	// pair and fail every probe.
+	if topology.rdma.any_active_roce() {
+		set.labels.insert("accel-net.lunnova.dev/rdma".into(), "present".into());
+	}
+	if !topology.rdma.is_empty() {
+		set.labels.insert(
+			"accel-net.lunnova.dev/rdma.devices-count".into(),
+			topology.rdma.devices.len().to_string(),
+		);
+		if let Ok(s) = serde_json::to_string(&topology.rdma) {
+			set.annotations.insert("accel-net.lunnova.dev/rdma-inventory".into(), s);
+		}
+	}
+
 	// LLDP — one label per observed switch chassis (so multi-uplink
 	// hosts plugged into different TORs surface that fact), plus a
 	// JSON annotation with full per-interface neighbour detail.

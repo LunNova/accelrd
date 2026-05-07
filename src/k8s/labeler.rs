@@ -26,6 +26,7 @@ const MANAGED_PREFIXES: &[&str] = &[
 	"accel.lunnova.dev/",
 	"accel-topo.lunnova.dev/",
 	"accel-ready.lunnova.dev/",
+	"accel-net.lunnova.dev/",
 ];
 
 pub struct OptionalLabeler {

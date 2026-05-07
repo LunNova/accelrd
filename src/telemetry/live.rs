@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use opentelemetry::{KeyValue, global};
 
-use crate::sensors::{Accelerator, AcceleratorSensor};
+use crate::sensors::{Accelerator, AcceleratorSensor, host};
 use crate::telemetry::{GaugeCache, base_attrs};
 
 pub async fn run(
@@ -22,10 +22,22 @@ pub async fn run(
 	let mut gauges = GaugeCache::default();
 	loop {
 		tick(&backends, &accelerators, &meter, &mut gauges).await;
+		host_tick(&meter, &mut gauges);
 		if once {
 			return;
 		}
 		tokio::time::sleep(interval).await;
+	}
+}
+
+fn host_tick(meter: &opentelemetry::metrics::Meter, gauges: &mut GaugeCache) {
+	for m in host::snapshot() {
+		let attrs: Vec<KeyValue> = m
+			.attrs
+			.iter()
+			.map(|(k, v)| KeyValue::new(k.to_string(), v.clone()))
+			.collect();
+		gauges.get_or_create(meter, &m).record(m.value, &attrs);
 	}
 }
 

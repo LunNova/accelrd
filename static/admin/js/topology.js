@@ -130,13 +130,18 @@
 			x: 12, y: bar_y, width: bar_w, height: 8, rx: 2,
 			fill: "#1a2456", stroke: "#2d1b5e",
 		}));
-		if (m.memory_total_bytes && m.memory_used_bytes != null && m.memory_total_bytes > 0) {
-			const frac = Math.max(0, Math.min(1, m.memory_used_bytes / m.memory_total_bytes));
+		// Pick the "primary" memory bar: VRAM if present, else UMA. RAM
+		// stays out of this view — the topology cards visualize accelerator
+		// memory pressure, not host RAM.
+		const memTotal = (m.vram_total_bytes || 0) + (m.uma_total_bytes || 0);
+		const memUsed = (m.vram_used_bytes || 0) + (m.uma_used_bytes || 0);
+		if (memTotal > 0) {
+			const frac = Math.max(0, Math.min(1, memUsed / memTotal));
 			g.appendChild(el("rect", {
 				x: 12, y: bar_y, width: bar_w * frac, height: 8, rx: 2,
 				fill: frac >= 0.9 ? "#ec5f67" : frac >= 0.75 ? "#fac863" : "#3bb1bc",
 			}));
-			const label = `${fmtBytes(m.memory_used_bytes)} / ${fmtBytes(m.memory_total_bytes)}`;
+			const label = `${fmtBytes(memUsed)} / ${fmtBytes(memTotal)}`;
 			g.appendChild(el("text", {
 				x: COL_W - 12, y: bar_y - 1,
 				"text-anchor": "end",

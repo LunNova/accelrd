@@ -9,6 +9,7 @@
 use async_trait::async_trait;
 
 use crate::sensors::common;
+use crate::sensors::host;
 use crate::sensors::{Coverage, Measurement, MemoryKind, Vendor};
 
 use super::{CheckContext, CheckOutcome, CheckScope, PreflightCheck, Status};
@@ -230,6 +231,136 @@ impl PreflightCheck for DriverLoaded {
 				"driver={driver_name}, expected {}",
 				expected_driver(a.id.vendor)
 			))
+		}
+	}
+}
+
+/// Host RAM has at least N bytes available before launching a GPU job.
+/// Uses MemAvailable, not MemFree — MemAvailable accounts for reclaimable
+/// page cache so we don't false-fail busy-but-fine hosts. Default 24 GiB
+/// matches the threshold below which CUDA/HIP context init + medium-model
+/// weight loading start failing on real workloads.
+pub struct HostMemoryAvailable {
+	pub min_available_bytes: u64,
+}
+
+impl Default for HostMemoryAvailable {
+	fn default() -> Self {
+		Self {
+			min_available_bytes: 24u64 << 30,
+		}
+	}
+}
+
+#[async_trait]
+impl PreflightCheck for HostMemoryAvailable {
+	fn name(&self) -> &'static str {
+		"host.memory.available"
+	}
+	fn scope(&self) -> CheckScope {
+		CheckScope::NodeLocal
+	}
+	async fn run(&self, _ctx: &CheckContext<'_>) -> CheckOutcome {
+		let snap = host::snapshot();
+		let Some(avail) = snap
+			.iter()
+			.find(|m| m.name == "host.memory.available_bytes")
+			.map(|m| m.value as u64)
+		else {
+			return CheckOutcome::skipped_with("MemAvailable unreadable from /proc/meminfo");
+		};
+		let measurements = vec![Measurement {
+			name: "host.preflight.memory.available",
+			unit: "By",
+			description: "MemAvailable observed by the host-memory preflight check.",
+			value: avail as f64,
+			attrs: Vec::new(),
+		}];
+		if avail < self.min_available_bytes {
+			CheckOutcome {
+				status: Status::Fail,
+				message: Some(format!(
+					"MemAvailable {} < required {} bytes",
+					avail, self.min_available_bytes
+				)),
+				measurements,
+			}
+		} else {
+			CheckOutcome {
+				status: Status::Pass,
+				message: None,
+				measurements,
+			}
+		}
+	}
+}
+
+/// At least one real (non-virtual) filesystem has N bytes free. We pick
+/// the largest mount because workload state (image pulls, model
+/// checkpoints, ephemeral volumes) lands wherever the container runtime
+/// happens to put it; the largest mount is almost always that target.
+/// Default 200 GiB matches the user's heuristic for "we have space for
+/// a model + image + checkpoints without falling over."
+pub struct HostDiskFree {
+	pub min_free_bytes: u64,
+}
+
+impl Default for HostDiskFree {
+	fn default() -> Self {
+		Self {
+			min_free_bytes: 200u64 << 30,
+		}
+	}
+}
+
+#[async_trait]
+impl PreflightCheck for HostDiskFree {
+	fn name(&self) -> &'static str {
+		"host.disk.free"
+	}
+	fn scope(&self) -> CheckScope {
+		CheckScope::NodeLocal
+	}
+	async fn run(&self, _ctx: &CheckContext<'_>) -> CheckOutcome {
+		let snap = host::snapshot();
+		let mut best: Option<(String, u64)> = None;
+		for m in snap.iter().filter(|m| m.name == "host.disk.free_bytes") {
+			let mount = m
+				.attrs
+				.iter()
+				.find(|(k, _)| *k == "mount")
+				.map(|(_, v)| v.clone())
+				.unwrap_or_default();
+			let bytes = m.value as u64;
+			if best.as_ref().map(|(_, b)| bytes > *b).unwrap_or(true) {
+				best = Some((mount, bytes));
+			}
+		}
+		let Some((mount, free)) = best else {
+			return CheckOutcome::skipped_with("no real-filesystem mounts found in /proc/self/mountinfo");
+		};
+		let measurements = vec![Measurement {
+			name: "host.preflight.disk.free",
+			unit: "By",
+			description: "Free bytes on the largest real mount.",
+			value: free as f64,
+			attrs: vec![("mount", mount.clone())],
+		}];
+		if free < self.min_free_bytes {
+			CheckOutcome {
+				status: Status::Fail,
+				message: Some(format!(
+					"largest mount {mount} has {free} free < required {} bytes",
+					self.min_free_bytes
+				)),
+				measurements,
+			}
+		} else {
+			CheckOutcome {
+				status: Status::Pass,
+				message: None,
+				measurements,
+			}
 		}
 	}
 }

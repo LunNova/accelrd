@@ -16,6 +16,7 @@ use crate::config::Resolved;
 use crate::sensors::{Accelerator, AcceleratorId, Vendor};
 
 use super::lldp;
+use super::rdma;
 use super::{FabricDomain, FabricKind, NodeTopology};
 
 pub async fn discover(args: &Resolved, accelerators: &mut [Accelerator]) -> NodeTopology {
@@ -26,6 +27,7 @@ pub async fn discover(args: &Resolved, accelerators: &mut [Accelerator]) -> Node
 		rack: args.rack.clone(),
 		fabric_domains: Vec::new(),
 		lldp_neighbors: Vec::new(),
+		rdma: rdma::RdmaInventory::scan(),
 	};
 
 	// Group accelerators into fabric domains. Per-vendor:

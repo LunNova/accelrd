@@ -9,6 +9,7 @@
 pub mod discover;
 pub mod labels;
 pub mod lldp;
+pub mod rdma;
 
 use serde::Serialize;
 
@@ -22,6 +23,7 @@ pub struct NodeTopology {
 	pub rack: Option<String>,
 	pub fabric_domains: Vec<FabricDomain>,
 	pub lldp_neighbors: Vec<lldp::LldpNeighbor>,
+	pub rdma: rdma::RdmaInventory,
 }
 
 #[derive(Debug, Clone, Serialize)]

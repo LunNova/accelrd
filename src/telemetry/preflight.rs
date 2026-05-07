@@ -22,7 +22,7 @@ use tracing::{Instrument, field};
 use crate::time::now_rfc3339;
 
 use crate::k8s::labeler::OptionalLabeler;
-use crate::preflight::{CheckContext, CheckOutcome, NodeReadiness, PreflightCheck, Status, aggregate};
+use crate::preflight::{CheckContext, CheckOutcome, CheckScope, NodeReadiness, PreflightCheck, Status, aggregate};
 use crate::sensors::Accelerator;
 use crate::telemetry::{GaugeCache, base_attrs};
 use crate::topology::NodeTopology;
@@ -86,6 +86,26 @@ impl PreflightMetrics {
 			self.obs_cache.get_or_create(&self.meter, m).record(m.value, &obs_attrs);
 		}
 	}
+
+	/// Same as `record` but for `NodeLocal`-scoped checks that don't have
+	/// a per-accelerator context. Attribution skips the per-accel keys.
+	fn record_node_local(&mut self, check: &dyn PreflightCheck, outcome: &CheckOutcome, elapsed_ms: f64) {
+		let attrs = vec![
+			KeyValue::new("name", check.name()),
+			KeyValue::new("status", outcome.status.slug()),
+			KeyValue::new("scope", check.scope().slug()),
+		];
+		self.duration_g.record(elapsed_ms, &attrs);
+		if outcome.status != Status::Skipped {
+			self.pass_g
+				.record(if outcome.status == Status::Pass { 1.0 } else { 0.0 }, &attrs);
+		}
+		for m in &outcome.measurements {
+			let mut obs_attrs = vec![KeyValue::new("check", check.name())];
+			obs_attrs.extend(m.attrs.iter().map(|(k, v)| KeyValue::new(k.to_string(), v.clone())));
+			self.obs_cache.get_or_create(&self.meter, m).record(m.value, &obs_attrs);
+		}
+	}
 }
 
 pub async fn run(inputs: PreflightInputs, labeler: OptionalLabeler) {
@@ -128,26 +148,48 @@ async fn run_cycle(inputs: &PreflightInputs, metrics: &mut PreflightMetrics, lab
 	let mut failed_checks = Vec::new();
 
 	for check in &inputs.checks {
-		for accel in &inputs.accelerators {
-			if !check.applies_to(accel) {
-				continue;
+		match check.scope() {
+			CheckScope::SingleAccelerator => {
+				for accel in &inputs.accelerators {
+					if !check.applies_to(accel) {
+						continue;
+					}
+					let span = tracing::info_span!(
+						"preflight.check",
+						check.name = check.name(),
+						check.scope = check.scope().slug(),
+						accel.vendor = accel.id.vendor.slug(),
+						accel.model = %accel.model,
+						accel.index = accel.id.drm_index as i64,
+						status = field::Empty,
+						message = field::Empty,
+					);
+					let (outcome, elapsed_ms) = run_one_check(check.as_ref(), Some(accel)).instrument(span).await;
+					metrics.record(check.as_ref(), accel, &outcome, elapsed_ms);
+					if matches!(outcome.status, Status::Fail | Status::Warn) {
+						failed_checks.push(format!("{}@{}", check.name(), accel.id.drm_index));
+					}
+					all_outcomes.push(outcome.status);
+				}
 			}
-			let span = tracing::info_span!(
-				"preflight.check",
-				check.name = check.name(),
-				check.scope = check.scope().slug(),
-				accel.vendor = accel.id.vendor.slug(),
-				accel.model = %accel.model,
-				accel.index = accel.id.drm_index as i64,
-				status = field::Empty,
-				message = field::Empty,
-			);
-			let (outcome, elapsed_ms) = run_one_check(check.as_ref(), accel).instrument(span).await;
-			metrics.record(check.as_ref(), accel, &outcome, elapsed_ms);
-			if matches!(outcome.status, Status::Fail | Status::Warn) {
-				failed_checks.push(format!("{}@{}", check.name(), accel.id.drm_index));
+			CheckScope::NodeLocal => {
+				let span = tracing::info_span!(
+					"preflight.check",
+					check.name = check.name(),
+					check.scope = check.scope().slug(),
+					status = field::Empty,
+					message = field::Empty,
+				);
+				let (outcome, elapsed_ms) = run_one_check(check.as_ref(), None).instrument(span).await;
+				metrics.record_node_local(check.as_ref(), &outcome, elapsed_ms);
+				if matches!(outcome.status, Status::Fail | Status::Warn) {
+					failed_checks.push(check.name().to_string());
+				}
+				all_outcomes.push(outcome.status);
 			}
-			all_outcomes.push(outcome.status);
+			// NodeTopology / Cluster scopes aren't dispatched yet — checks
+			// at those scopes haven't landed. Skip silently.
+			CheckScope::NodeTopology | CheckScope::Cluster => {}
 		}
 	}
 
@@ -193,13 +235,9 @@ async fn run_cycle(inputs: &PreflightInputs, metrics: &mut PreflightMetrics, lab
 
 /// Run one (check, accelerator). The caller wraps this in a tracing
 /// span so the OTel exporter sees the right parent/child relationship.
-async fn run_one_check(check: &dyn PreflightCheck, accel: &Accelerator) -> (CheckOutcome, f64) {
+async fn run_one_check(check: &dyn PreflightCheck, accel: Option<&Accelerator>) -> (CheckOutcome, f64) {
 	let started = Instant::now();
-	let outcome = check
-		.run(&CheckContext {
-			accelerator: Some(accel),
-		})
-		.await;
+	let outcome = check.run(&CheckContext { accelerator: accel }).await;
 	let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
 
 	let span = tracing::Span::current();

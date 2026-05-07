@@ -133,6 +133,8 @@ pub fn default_registry() -> Vec<Box<dyn PreflightCheck>> {
 		Box::new(health::DriverLoaded),
 		Box::new(health::TemperatureBelowThrottle::default()),
 		Box::new(health::MemoryFloor::default()),
+		Box::new(health::HostMemoryAvailable::default()),
+		Box::new(health::HostDiskFree::default()),
 		Box::new(placeholder::AlwaysPass),
 	]
 }

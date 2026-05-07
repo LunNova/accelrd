@@ -10,7 +10,6 @@
 //! prints a single JSON object on stdout for the prober to consume.
 
 mod device;
-mod net;
 mod perftest;
 
 use std::process::Stdio;
@@ -248,28 +247,42 @@ async fn run_server(device: &str, duration_secs: u64) -> Outcome {
 }
 
 async fn run_client(server: &str, device: &str, duration_secs: u64, connect_timeout_secs: u64) -> Outcome {
+	// We can't probe the server's readiness with a TCP connect-then-close:
+	// `ib_send_bw`'s server side accept()s the readiness connection, tries
+	// to read the QP-exchange handshake, gets EOF, prints
+	// "Failed to exchange data between server and clients" and exits.
+	// Any closed TCP probe poisons the server. Instead, retry the real
+	// `ib_send_bw` client until it either succeeds or the deadline expires.
 	let deadline = Instant::now() + Duration::from_secs(connect_timeout_secs);
-	if let Err(e) = net::wait_connectable(server, PERFTEST_PORT, deadline).await {
-		return Outcome::Err(format!("server unreachable: {e}"));
-	}
-	let std_cmd = perftest::build_cmd(Some(server), device, PERFTEST_PORT, duration_secs);
-	let mut cmd = Command::from(std_cmd);
-	let output = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).output().await {
-		Ok(o) => o,
-		Err(e) => return Outcome::Err(format!("spawn ib_send_bw: {e}")),
-	};
-	let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-	let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-	if !output.status.success() {
-		return Outcome::Err(format!(
-			"ib_send_bw exit {}: {}",
-			output.status,
-			stderr.trim().lines().last().unwrap_or("")
-		));
-	}
-	match perftest::parse_required(&stdout) {
-		Ok(s) => Outcome::Ok(s),
-		Err(e) => Outcome::Err(e.to_string()),
+	let mut backoff = Duration::from_millis(500);
+	loop {
+		let std_cmd = perftest::build_cmd(Some(server), device, PERFTEST_PORT, duration_secs);
+		let mut cmd = Command::from(std_cmd);
+		let output = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).output().await {
+			Ok(o) => o,
+			Err(e) => return Outcome::Err(format!("spawn ib_send_bw: {e}")),
+		};
+		let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+		let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+		if output.status.success() {
+			return match perftest::parse_required(&stdout) {
+				Ok(s) => Outcome::Ok(s),
+				Err(e) => Outcome::Err(e.to_string()),
+			};
+		}
+		let combined = format!("{stdout}\n{stderr}");
+		let connect_failed = combined.contains("Couldn't connect to")
+			|| combined.contains("Unable to init the socket connection")
+			|| combined.contains("Unable to open file descriptor for socket connection");
+		let now = Instant::now();
+		if !connect_failed || now >= deadline {
+			let last = stderr.trim().lines().last().unwrap_or("");
+			return Outcome::Err(format!("ib_send_bw exit {}: {}", output.status, last));
+		}
+		tracing::debug!(?backoff, "ib_send_bw client: server not yet listening, retrying");
+		let sleep_for = backoff.min(deadline.saturating_duration_since(now));
+		tokio::time::sleep(sleep_for).await;
+		backoff = (backoff * 2).min(Duration::from_secs(3));
 	}
 }
 

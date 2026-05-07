@@ -12,8 +12,15 @@ kind: Namespace
 metadata:
   name: accelrd
   labels:
-    pod-security.kubernetes.io/enforce: restricted
-    pod-security.kubernetes.io/audit: restricted
+    # The DaemonSet needs hostNetwork (for LLDP multicast), CAP_NET_RAW
+    # (raw AF_PACKET socket), and hostPath mounts (/sys, /proc). All three
+    # are forbidden by `baseline` and `restricted` PSA levels, so the
+    # namespace must be `privileged` for the pod to admit. We still warn
+    # at `baseline` so operators see if anyone *else* deploys something
+    # less-privileged-than-the-daemon into this namespace.
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/audit: baseline
 ---
 apiVersion: v1
 kind: ServiceAccount

@@ -6,12 +6,25 @@
 //! Works equally well for discrete Radeon, integrated Raphael/Phoenix
 //! iGPUs, and Instinct accelerators.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 
 use super::common;
 use super::{Accelerator, AcceleratorId, AcceleratorSensor, Coverage, Measurement, MemoryKind, Snapshot, Vendor};
+
+/// `(sysfs_filename, metric_name, description)` for each amdgpu memory gauge.
+const MEMORY_METRICS: &[(&str, &str, &str)] = &[
+	("mem_info_vram_total", "accel.memory.vram.total", "Dedicated VRAM size reported by amdgpu (small on iGPUs)."),
+	("mem_info_vram_used", "accel.memory.vram.used", "Used VRAM bytes."),
+	("mem_info_gtt_total", "accel.memory.gtt.total", "GTT (host aperture) size — this is the UMA carrier on iGPUs."),
+	("mem_info_gtt_used", "accel.memory.gtt.used", "Used GTT bytes."),
+	(
+		"mem_info_visible_vram_total",
+		"accel.memory.visible_vram.total",
+		"CPU-visible portion of VRAM (BAR1/Resizable-BAR aperture).",
+	),
+];
 
 pub struct AmdSysfsSensor;
 
@@ -22,122 +35,25 @@ impl AcceleratorSensor for AmdSysfsSensor {
 	}
 
 	async fn enumerate(&self) -> anyhow::Result<Vec<Accelerator>> {
-		let mut out = Vec::new();
-		for (drm_index, device_dir) in common::drm_cards() {
-			let vendor_id = common::read_hex_u16(&device_dir.join("vendor")).unwrap_or(0);
-			if Vendor::from_pci_id(vendor_id) != Vendor::Amd {
-				continue;
-			}
-			let device_id = common::read_hex_u16(&device_dir.join("device")).unwrap_or(0);
-			let model = amd_model_name(device_id, &device_dir);
-			let pci_addr = common::pci_addr_from_device_dir(&device_dir).unwrap_or_default();
-
-			let vram_total = common::read_u64(&device_dir.join("mem_info_vram_total")).unwrap_or(0);
-			let gtt_total = common::read_u64(&device_dir.join("mem_info_gtt_total")).unwrap_or(0);
-			// UMA rule: a card whose host-aperture (GTT) dwarfs its dedicated
-			// VRAM is presenting an iGPU-style unified memory.
-			let memory_kind = if gtt_total > vram_total.saturating_mul(4) {
-				MemoryKind::Unified
-			} else if vram_total > 0 {
-				MemoryKind::Dedicated
-			} else {
-				MemoryKind::Unknown
-			};
-			// For unified, total = GTT (it's the host aperture, the relevant
-			// upper bound). For dedicated, total = VRAM. This matches how a
-			// scheduler should reason about "how much can I allocate".
-			let memory_total_bytes = match memory_kind {
-				MemoryKind::Unified => Some(gtt_total),
-				MemoryKind::Dedicated => Some(vram_total),
-				_ => None,
-			};
-
-			let numa_node = common::read_i32(&device_dir.join("numa_node"));
-			let local_cpus = common::read_string_first_line(&device_dir.join("local_cpulist"))
-				.map(|s| common::parse_cpulist(&s))
-				.unwrap_or_default();
-			let iommu_group = common::read_string(&device_dir.join("iommu_group/type"))
-				.and_then(|_| {
-					std::fs::read_link(device_dir.join("iommu_group"))
-						.ok()
-						.and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()))
-				})
-				.and_then(|s| s.parse::<u32>().ok());
-
-			out.push(Accelerator {
-				id: AcceleratorId { vendor: Vendor::Amd, drm_index, pci_addr },
-				model,
-				memory_kind,
-				memory_total_bytes,
-				numa_node,
-				local_cpus,
-				iommu_group,
-				coverage: Coverage::Full,
-				fabric_domain: None,
-				partitioned: false,
-				device_dir,
-			});
-		}
-		Ok(out)
+		Ok(common::enumerate_for_vendor(Vendor::Amd, build_accelerator))
 	}
 
 	async fn snapshot(&self, accel: &Accelerator) -> anyhow::Result<Snapshot> {
 		let dir = &accel.device_dir;
 		let mut m = Vec::new();
 
-		if let Some(v) = common::read_u64(&dir.join("mem_info_vram_total")) {
-			m.push(Measurement {
-				name: "accel.memory.vram.total",
-				unit: "By",
-				description: "Dedicated VRAM size reported by amdgpu (small on iGPUs).",
-				value: v as f64,
-				attrs: Vec::new(),
-			});
-		}
-		if let Some(v) = common::read_u64(&dir.join("mem_info_vram_used")) {
-			m.push(Measurement {
-				name: "accel.memory.vram.used",
-				unit: "By",
-				description: "Used VRAM bytes.",
-				value: v as f64,
-				attrs: Vec::new(),
-			});
-		}
-		if let Some(v) = common::read_u64(&dir.join("mem_info_gtt_total")) {
-			m.push(Measurement {
-				name: "accel.memory.gtt.total",
-				unit: "By",
-				description: "GTT (host aperture) size — this is the UMA carrier on iGPUs.",
-				value: v as f64,
-				attrs: Vec::new(),
-			});
-		}
-		if let Some(v) = common::read_u64(&dir.join("mem_info_gtt_used")) {
-			m.push(Measurement {
-				name: "accel.memory.gtt.used",
-				unit: "By",
-				description: "Used GTT bytes.",
-				value: v as f64,
-				attrs: Vec::new(),
-			});
-		}
-		if let Some(v) = common::read_u64(&dir.join("mem_info_visible_vram_total")) {
-			m.push(Measurement {
-				name: "accel.memory.visible_vram.total",
-				unit: "By",
-				description: "CPU-visible portion of VRAM (BAR1/Resizable-BAR aperture).",
-				value: v as f64,
-				attrs: Vec::new(),
-			});
+		for (file, name, desc) in MEMORY_METRICS {
+			if let Some(v) = common::read_u64(&dir.join(file)) {
+				m.push(common::measurement(name, "By", desc, v as f64));
+			}
 		}
 		if let Some(v) = common::read_u64(&dir.join("gpu_busy_percent")) {
-			m.push(Measurement {
-				name: "accel.utilization",
-				unit: "1",
-				description: "Approximate GPU busy fraction (gpu_busy_percent / 100).",
-				value: v as f64 / 100.0,
-				attrs: Vec::new(),
-			});
+			m.push(common::measurement(
+				"accel.utilization",
+				"1",
+				"Approximate GPU busy fraction (gpu_busy_percent / 100).",
+				v as f64 / 100.0,
+			));
 		}
 
 		// hwmon: temp1_input is mC, power1_average is µW.
@@ -152,28 +68,57 @@ impl AcceleratorSensor for AmdSysfsSensor {
 				});
 			}
 			if let Some(p) = common::read_u64(&hw.join("power1_average")) {
-				m.push(Measurement {
-					name: "accel.power.usage",
-					unit: "W",
-					description: "Average board power from hwmon power1_average.",
-					value: p as f64 / 1_000_000.0,
-					attrs: Vec::new(),
-				});
+				m.push(common::measurement(
+					"accel.power.usage",
+					"W",
+					"Average board power from hwmon power1_average.",
+					p as f64 / 1_000_000.0,
+				));
 			}
 		}
 
-		// Sensor health: even if we read nothing else, `device/vendor` returning
-		// the right thing means amdgpu hasn't crashed out under us.
-		let healthy = common::read_hex_u16(&dir.join("vendor")).map(|v| v == 0x1002).unwrap_or(false);
-		m.push(Measurement {
-			name: "accel.sensor.health",
-			unit: "1",
-			description: "1 = sensor reads succeeding, 0 = backend broken.",
-			value: if healthy { 1.0 } else { 0.0 },
-			attrs: Vec::new(),
-		});
-
+		m.push(common::sensor_health(dir, Vendor::Amd));
 		Ok(Snapshot { measurements: m })
+	}
+}
+
+fn build_accelerator(drm_index: u32, device_dir: PathBuf) -> Accelerator {
+	let device_id = common::read_hex_u16(&device_dir.join("device")).unwrap_or(0);
+	let pci_addr = common::pci_addr_from_device_dir(&device_dir).unwrap_or_default();
+	let (memory_kind, memory_total_bytes) = classify_memory(&device_dir);
+
+	let iommu_group = std::fs::read_link(device_dir.join("iommu_group"))
+		.ok()
+		.and_then(|p| p.file_name()?.to_str()?.parse::<u32>().ok());
+
+	Accelerator {
+		id: AcceleratorId { vendor: Vendor::Amd, drm_index, pci_addr },
+		model: amd_model_name(device_id, &device_dir),
+		memory_kind,
+		memory_total_bytes,
+		numa_node: common::read_i32(&device_dir.join("numa_node")),
+		local_cpus: common::read_local_cpus(&device_dir),
+		iommu_group,
+		coverage: Coverage::Full,
+		fabric_domain: None,
+		partitioned: false,
+		device_dir,
+	}
+}
+
+/// UMA rule: a card whose host-aperture (GTT) dwarfs its dedicated VRAM is
+/// presenting an iGPU-style unified memory. For unified, total = GTT (the
+/// host aperture is the relevant upper bound). For dedicated, total = VRAM.
+/// This matches how a scheduler should reason about "how much can I allocate".
+fn classify_memory(device_dir: &Path) -> (MemoryKind, Option<u64>) {
+	let vram_total = common::read_u64(&device_dir.join("mem_info_vram_total")).unwrap_or(0);
+	let gtt_total = common::read_u64(&device_dir.join("mem_info_gtt_total")).unwrap_or(0);
+	if gtt_total > vram_total.saturating_mul(4) {
+		(MemoryKind::Unified, Some(gtt_total))
+	} else if vram_total > 0 {
+		(MemoryKind::Dedicated, Some(vram_total))
+	} else {
+		(MemoryKind::Unknown, None)
 	}
 }
 
@@ -187,6 +132,5 @@ fn amd_model_name(device_id: u16, device_dir: &Path) -> String {
 }
 
 fn hwmon_label(hw: &Path, prefix: &str) -> String {
-	let label_path = hw.join(format!("{prefix}_label"));
-	common::read_string_first_line(&label_path).unwrap_or_else(|| prefix.to_string())
+	common::read_string_first_line(&hw.join(format!("{prefix}_label"))).unwrap_or_else(|| prefix.to_string())
 }

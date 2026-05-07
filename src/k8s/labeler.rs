@@ -9,15 +9,13 @@
 //!   nulls out any of our managed prefixes that are no longer present
 //!   (so the node converges as the daemon's view changes).
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use std::collections::BTreeMap;
-
 use k8s_openapi::api::core::v1::Node;
-use kube::Api;
-use kube::Client;
 use kube::api::{Patch, PatchParams};
+use kube::{Api, Client};
 use serde_json::{Map, Value, json};
 
 use crate::topology::labels::LabelSet;
@@ -102,12 +100,12 @@ impl OptionalLabeler {
 			}
 		};
 
-		let patch = build_merge_patch(current.metadata.labels.as_ref(), current.metadata.annotations.as_ref(), labels);
+		let patch_body = build_merge_patch(current.metadata.labels.as_ref(), current.metadata.annotations.as_ref(), labels);
 		let patch_params = PatchParams::default();
-		let patch = Patch::Merge(&patch);
+		let patch = Patch::Merge(&patch_body);
 
-		let mut attempt = 0u32;
-		loop {
+		const MAX_ATTEMPTS: u32 = 3;
+		for attempt in 1..=MAX_ATTEMPTS {
 			match nodes.patch(&self.node_name, &patch_params, &patch).await {
 				Ok(_) => {
 					if first {
@@ -122,20 +120,19 @@ impl OptionalLabeler {
 					}
 					return;
 				}
-				Err(e) => {
-					attempt += 1;
-					if attempt >= 3 {
-						tracing::warn!(
-							error = %e,
-							node = %self.node_name,
-							attempts = attempt,
-							"node patch failed after retries; will retry next reconcile",
-						);
-						return;
-					}
+				Err(e) if attempt < MAX_ATTEMPTS => {
 					let backoff = Duration::from_millis(200u64 << attempt);
 					tracing::debug!(error = %e, attempt, "node patch failed; retrying");
 					tokio::time::sleep(backoff).await;
+				}
+				Err(e) => {
+					tracing::warn!(
+						error = %e,
+						node = %self.node_name,
+						attempts = attempt,
+						"node patch failed after retries; will retry next reconcile",
+					);
+					return;
 				}
 			}
 		}
@@ -152,31 +149,27 @@ fn build_merge_patch(
 	current_annotations: Option<&BTreeMap<String, String>>,
 	desired: &LabelSet,
 ) -> Value {
-	let mut labels = Map::new();
-	if let Some(cur) = current_labels {
-		for k in cur.keys() {
-			if is_managed(k) && !desired.labels.contains_key(k) {
-				labels.insert(k.clone(), Value::Null);
-			}
-		}
-	}
-	for (k, v) in &desired.labels {
-		labels.insert(k.clone(), Value::String(v.clone()));
-	}
-
-	let mut annotations = Map::new();
-	if let Some(cur) = current_annotations {
-		for k in cur.keys() {
-			if is_managed(k) && !desired.annotations.contains_key(k) {
-				annotations.insert(k.clone(), Value::Null);
-			}
-		}
-	}
-	for (k, v) in &desired.annotations {
-		annotations.insert(k.clone(), Value::String(v.clone()));
-	}
-
+	let labels = merged_section(current_labels, &desired.labels);
+	let annotations = merged_section(current_annotations, &desired.annotations);
 	json!({ "metadata": { "labels": labels, "annotations": annotations } })
+}
+
+/// Build one section (labels or annotations) of the merge patch: null
+/// out managed-prefix keys we no longer want, then overlay the desired
+/// keys.
+fn merged_section(current: Option<&BTreeMap<String, String>>, desired: &BTreeMap<String, String>) -> Map<String, Value> {
+	let mut out = Map::new();
+	if let Some(cur) = current {
+		for k in cur.keys() {
+			if is_managed(k) && !desired.contains_key(k) {
+				out.insert(k.clone(), Value::Null);
+			}
+		}
+	}
+	for (k, v) in desired {
+		out.insert(k.clone(), Value::String(v.clone()));
+	}
+	out
 }
 
 fn is_managed(key: &str) -> bool {

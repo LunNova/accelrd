@@ -7,9 +7,10 @@
 //! `topology.kubernetes.io/*` namespace beyond the well-known passthroughs
 //! — custom keys live under `accel.lunnova.dev` and `accel-topo.lunnova.dev`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 
-use crate::sensors::Accelerator;
+use crate::sensors::{Accelerator, common};
 
 use super::NodeTopology;
 
@@ -21,14 +22,15 @@ pub struct LabelSet {
 
 impl LabelSet {
 	pub fn pretty(&self) -> String {
+		use std::fmt::Write as _;
 		let mut out = String::from("labels:\n");
 		for (k, v) in &self.labels {
-			out.push_str(&format!("  {k} = {v}\n"));
+			let _ = writeln!(out, "  {k} = {v}");
 		}
 		out.push_str("annotations:\n");
 		for (k, v) in &self.annotations {
 			let preview = if v.len() > 80 { format!("{}…", &v[..80]) } else { v.clone() };
-			out.push_str(&format!("  {k} = {preview}\n"));
+			let _ = writeln!(out, "  {k} = {preview}");
 		}
 		out
 	}
@@ -37,6 +39,7 @@ impl LabelSet {
 pub fn build(topology: &NodeTopology, accelerators: &[Accelerator]) -> LabelSet {
 	let mut set = LabelSet::default();
 
+	// Topology block/rack passthroughs.
 	if let Some(v) = &topology.block {
 		set.labels.insert("accel-topo.lunnova.dev/block".into(), v.clone());
 	}
@@ -44,7 +47,7 @@ pub fn build(topology: &NodeTopology, accelerators: &[Accelerator]) -> LabelSet 
 		set.labels.insert("accel-topo.lunnova.dev/rack".into(), v.clone());
 	}
 
-	// Fabric-domain presence labels — one per domain, value = member count.
+	// Fabric-domain presence: one count per domain id.
 	let mut domain_counts: BTreeMap<&str, usize> = BTreeMap::new();
 	for d in &topology.fabric_domains {
 		*domain_counts.entry(d.id.as_str()).or_default() += d.member_accelerators.len();
@@ -55,63 +58,91 @@ pub fn build(topology: &NodeTopology, accelerators: &[Accelerator]) -> LabelSet 
 	set.labels
 		.insert("accel-topo.lunnova.dev/fabric-domains-count".into(), topology.fabric_domains.len().to_string());
 
-	// Vendor counts.
-	let mut vendor_counts: BTreeMap<String, usize> = BTreeMap::new();
-	let mut model_counts: BTreeMap<String, usize> = BTreeMap::new();
-	let mut memkind_counts: BTreeMap<String, usize> = BTreeMap::new();
-	let mut physical_funcs: BTreeMap<String, std::collections::BTreeSet<std::path::PathBuf>> = BTreeMap::new();
+	// Per-vendor / per-model / per-memory-kind counts.
+	let vendor_counts = count_by(accelerators, |a| a.id.vendor.slug().to_string());
+	let model_counts = count_by(accelerators, |a| slugify(&a.model));
+	let memkind_counts = count_by(accelerators, |a| a.memory_kind.slug().to_string());
+	emit_count_labels(&mut set, "accel.lunnova.dev/vendor", &vendor_counts);
+	emit_count_labels(&mut set, "accel.lunnova.dev/model", &model_counts);
+	emit_count_labels(&mut set, "accel.lunnova.dev/memory-kind", &memkind_counts);
 
+	// Physical card count per vendor: collapse partitions/SR-IOV by counting
+	// distinct parent PCI functions.
+	let mut physical_funcs: BTreeMap<String, BTreeSet<PathBuf>> = BTreeMap::new();
 	for a in accelerators {
-		*vendor_counts.entry(a.id.vendor.slug().to_string()).or_default() += 1;
-		*model_counts.entry(slugify(&a.model)).or_default() += 1;
-		*memkind_counts.entry(a.memory_kind.slug().to_string()).or_default() += 1;
 		if let Some(parent) = a.device_dir.parent() {
 			physical_funcs.entry(a.id.vendor.slug().into()).or_default().insert(parent.to_path_buf());
 		}
 	}
-	for (k, c) in &vendor_counts {
-		set.labels.insert(format!("accel.lunnova.dev/vendor.{k}.count"), c.to_string());
-	}
-	for (k, c) in &model_counts {
-		set.labels.insert(format!("accel.lunnova.dev/model.{k}.count"), c.to_string());
-	}
-	for (k, c) in &memkind_counts {
-		set.labels.insert(format!("accel.lunnova.dev/memory-kind.{k}.count"), c.to_string());
-	}
-	for (k, funcs) in &physical_funcs {
-		set.labels.insert(format!("accel.lunnova.dev/vendor.{k}.physical-count"), funcs.len().to_string());
+	for (vendor, funcs) in &physical_funcs {
+		set.labels.insert(format!("accel.lunnova.dev/vendor.{vendor}.physical-count"), funcs.len().to_string());
 	}
 	set.labels.insert("accel.lunnova.dev/total-count".into(), accelerators.len().to_string());
 
-	// Inventory + fabric-graph annotations.
-	if let Ok(inv) = serde_json::to_string(&accelerators.iter().map(InventoryEntry::from).collect::<Vec<_>>()) {
-		set.annotations.insert("accel.lunnova.dev/inventory".into(), inv);
+	// SR-IOV: surface configured + total VF capacity per physical card.
+	// Only emitted when the card actually exposes the sysfs files.
+	let mut sriov_total = 0u64;
+	let mut sriov_used = 0u64;
+	let mut sriov_seen = false;
+	for a in accelerators {
+		if let Some(parent) = a.device_dir.parent()
+			&& let Some((total, used)) = common::sriov_capacity(parent)
+		{
+			sriov_total = sriov_total.max(total);
+			sriov_used += used;
+			sriov_seen = true;
+		}
 	}
-	if let Ok(fg) = serde_json::to_string(&topology.fabric_domains) {
-		set.annotations.insert("accel.lunnova.dev/fabric-graph".into(), fg);
+	if sriov_seen {
+		set.labels.insert("accel.lunnova.dev/sriov.total".into(), sriov_total.to_string());
+		set.labels.insert("accel.lunnova.dev/sriov.configured".into(), sriov_used.to_string());
+	}
+
+	// Inventory + fabric-graph annotations. Errors here are non-fatal: a
+	// serialize failure just means the annotation is missing.
+	let inventory: Vec<InventoryEntry> = accelerators.iter().map(InventoryEntry::from).collect();
+	if let Ok(s) = serde_json::to_string(&inventory) {
+		set.annotations.insert("accel.lunnova.dev/inventory".into(), s);
+	}
+	if let Ok(s) = serde_json::to_string(&topology.fabric_domains) {
+		set.annotations.insert("accel.lunnova.dev/fabric-graph".into(), s);
 	}
 
 	set
 }
 
+fn count_by<F: Fn(&Accelerator) -> String>(accels: &[Accelerator], key: F) -> BTreeMap<String, usize> {
+	let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+	for a in accels {
+		*counts.entry(key(a)).or_default() += 1;
+	}
+	counts
+}
+
+fn emit_count_labels(set: &mut LabelSet, prefix: &str, counts: &BTreeMap<String, usize>) {
+	for (key, count) in counts {
+		set.labels.insert(format!("{prefix}.{key}.count"), count.to_string());
+	}
+}
+
 #[derive(serde::Serialize)]
 struct InventoryEntry<'a> {
-	vendor: String,
+	vendor: &'static str,
 	model: &'a str,
-	memory_kind: &'a str,
+	memory_kind: &'static str,
 	memory_total_bytes: Option<u64>,
 	fabric_domain: Option<&'a str>,
 	numa_node: Option<i32>,
 	accel_index: u32,
 	pci_addr: &'a str,
-	coverage: &'a str,
+	coverage: &'static str,
 	partitioned: bool,
 }
 
 impl<'a> From<&'a Accelerator> for InventoryEntry<'a> {
 	fn from(a: &'a Accelerator) -> Self {
 		Self {
-			vendor: a.id.vendor.slug().into(),
+			vendor: a.id.vendor.slug(),
 			model: &a.model,
 			memory_kind: a.memory_kind.slug(),
 			memory_total_bytes: a.memory_total_bytes,
@@ -141,6 +172,6 @@ fn slugify(s: &str) -> String {
 			last_dash = true;
 		}
 	}
-	let trimmed = out.trim_matches('-').to_string();
-	if trimmed.is_empty() { "unknown".into() } else { trimmed }
+	let trimmed = out.trim_matches('-');
+	if trimmed.is_empty() { "unknown".into() } else { trimmed.to_string() }
 }

@@ -5,6 +5,7 @@
 //! firmware version, fabric integrity) are out of scope this lift; the
 //! shape is here so they can be plugged in without redesign.
 
+pub mod health;
 pub mod placeholder;
 
 use async_trait::async_trait;
@@ -32,7 +33,6 @@ impl CheckScope {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Warn/Fail constructed by real preflight checks (future).
 pub enum Status {
 	Pass,
 	Warn,
@@ -58,12 +58,38 @@ impl Status {
 pub struct CheckOutcome {
 	pub status: Status,
 	pub message: Option<String>,
-	#[allow(dead_code)] // Real checks emit per-check measurements.
 	pub measurements: Vec<Measurement>,
 }
 
+impl CheckOutcome {
+	/// Skipped outcome with no message — the common "no accelerator in
+	/// context" early return for `SingleAccelerator`-scoped checks.
+	pub fn skipped() -> Self {
+		Self { status: Status::Skipped, message: None, measurements: Vec::new() }
+	}
+
+	/// Skipped with an explanatory message.
+	pub fn skipped_with(msg: impl Into<String>) -> Self {
+		Self { status: Status::Skipped, message: Some(msg.into()), measurements: Vec::new() }
+	}
+
+	/// Pass with no measurements.
+	pub fn pass() -> Self {
+		Self { status: Status::Pass, message: None, measurements: Vec::new() }
+	}
+
+	/// Fail with an explanatory message.
+	pub fn fail(msg: impl Into<String>) -> Self {
+		Self { status: Status::Fail, message: Some(msg.into()), measurements: Vec::new() }
+	}
+
+	/// Warn with an explanatory message.
+	pub fn warn(msg: impl Into<String>) -> Self {
+		Self { status: Status::Warn, message: Some(msg.into()), measurements: Vec::new() }
+	}
+}
+
 pub struct CheckContext<'a> {
-	#[allow(dead_code)] // Used by real checks; placeholder ignores it.
 	pub accelerator: Option<&'a Accelerator>,
 }
 
@@ -71,37 +97,34 @@ pub struct CheckContext<'a> {
 pub trait PreflightCheck: Send + Sync {
 	fn name(&self) -> &'static str;
 	fn scope(&self) -> CheckScope;
-	#[allow(unused_variables)]
-	fn applies_to(&self, accel: &Accelerator) -> bool {
+	fn applies_to(&self, _accel: &Accelerator) -> bool {
 		true
 	}
 	async fn run(&self, ctx: &CheckContext<'_>) -> CheckOutcome;
 }
 
-/// Default registry — currently just the placeholder.
+/// Default check registry. Real, sysfs-friendly checks plus the
+/// always-Pass placeholder so the trait shape stays exercised even when
+/// every other check is Skipped.
 pub fn default_registry() -> Vec<Box<dyn PreflightCheck>> {
-	vec![Box::new(placeholder::AlwaysPass)]
+	vec![
+		Box::new(health::SensorReadable),
+		Box::new(health::DrmRenderNodePresent),
+		Box::new(health::DriverLoaded),
+		Box::new(health::TemperatureBelowThrottle::default()),
+		Box::new(health::MemoryFloor::default()),
+		Box::new(placeholder::AlwaysPass),
+	]
 }
 
 /// Aggregate per-(check, accel) outcomes into a single node-level verdict
-/// for a readiness class (inference / training).
+/// for a readiness class (inference / training). Fail and Warn both
+/// degrade today; when stricter aggregation is needed, Fail will graduate
+/// to `NotReady`.
 pub fn aggregate(outcomes: &[Status]) -> NodeReadiness {
-	let mut any_fail = false;
-	let mut any_warn = false;
-	let mut any_pass = false;
-	for s in outcomes {
-		match s {
-			Status::Fail => any_fail = true,
-			Status::Warn => any_warn = true,
-			Status::Pass => any_pass = true,
-			Status::Skipped => {}
-		}
-	}
-	if any_fail {
+	if outcomes.iter().any(|s| matches!(s, Status::Fail | Status::Warn)) {
 		NodeReadiness::Degraded
-	} else if any_warn {
-		NodeReadiness::Degraded
-	} else if any_pass {
+	} else if outcomes.contains(&Status::Pass) {
 		NodeReadiness::Ready
 	} else {
 		NodeReadiness::Unknown

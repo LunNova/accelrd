@@ -28,23 +28,18 @@ pub fn discover(args: &Args, accelerators: &mut [Accelerator]) -> NodeTopology {
 	//   AMD: walk xgmi_* sysfs to find connected components.
 	//   Nvidia: sysfs-only ⇒ each card is its own single-member PCIe domain.
 	//   Intel/Other: same single-member PCIe domain.
-	let amd_groups = build_amd_xgmi_groups(accelerators);
-	for (members, kind) in amd_groups {
+	for members in build_amd_xgmi_groups(accelerators) {
 		let id = stable_domain_id(&members);
-		for m in &members {
-			if let Some(a) = accelerators.iter_mut().find(|a| a.id == *m) {
-				a.fabric_domain = Some(id.clone());
-			}
-		}
+		assign_fabric(accelerators, &members, &id);
 		topology.fabric_domains.push(FabricDomain {
 			id,
-			kind,
+			kind: FabricKind::XGmi,
 			member_accelerators: members,
 			aggregate_bandwidth_gbps: None,
 		});
 	}
 
-	// Single-card fallbacks for non-AMD or AMD with no xGMI peers.
+	// Single-card fallback for accelerators not yet placed in a fabric.
 	for accel in accelerators.iter_mut() {
 		if accel.fabric_domain.is_some() {
 			continue;
@@ -62,73 +57,63 @@ pub fn discover(args: &Args, accelerators: &mut [Accelerator]) -> NodeTopology {
 	topology
 }
 
-fn build_amd_xgmi_groups(accels: &[Accelerator]) -> Vec<(Vec<AcceleratorId>, FabricKind)> {
+/// Build xGMI connected components from AMD accelerator sysfs. Lone AMD
+/// cards (no peer links) are excluded — the single-card fallback handles
+/// them — so this only emits multi-member groups.
+fn build_amd_xgmi_groups(accels: &[Accelerator]) -> Vec<Vec<AcceleratorId>> {
 	let amd: Vec<&Accelerator> = accels.iter().filter(|a| a.id.vendor == Vendor::Amd).collect();
-	let mut adjacency: HashMap<AcceleratorId, BTreeSet<AcceleratorId>> = HashMap::new();
+	let mut adjacency: HashMap<&AcceleratorId, BTreeSet<&AcceleratorId>> = HashMap::new();
+
 	for a in &amd {
-		adjacency.entry(a.id.clone()).or_default();
-		// xgmi_link_count tells us how many peer links this card has;
-		// xgmi_peer_links lists peer PCI addresses (one per link).
-		let count_path = a.device_dir.join("xgmi_link_count");
-		if !count_path.exists() {
-			continue;
-		}
-		let peers = read_xgmi_peers(&a.device_dir);
-		for peer in peers {
-			if let Some(peer_id) = amd.iter().find(|p| p.id.pci_addr == peer).map(|p| p.id.clone()) {
-				adjacency.entry(a.id.clone()).or_default().insert(peer_id.clone());
-				adjacency.entry(peer_id).or_default().insert(a.id.clone());
-			}
+		adjacency.entry(&a.id).or_default();
+		for peer_addr in read_xgmi_peers(&a.device_dir) {
+			let Some(peer) = amd.iter().find(|p| p.id.pci_addr == peer_addr) else { continue };
+			adjacency.entry(&a.id).or_default().insert(&peer.id);
+			adjacency.entry(&peer.id).or_default().insert(&a.id);
 		}
 	}
 
-	// Connected components by BFS.
-	let mut visited: BTreeSet<AcceleratorId> = BTreeSet::new();
-	let mut groups: Vec<(Vec<AcceleratorId>, FabricKind)> = Vec::new();
-	for start in adjacency.keys().cloned().collect::<Vec<_>>() {
-		if visited.contains(&start) {
+	// Connected components by BFS over the adjacency map.
+	let mut visited: BTreeSet<&AcceleratorId> = BTreeSet::new();
+	let mut groups: Vec<Vec<AcceleratorId>> = Vec::new();
+	for &start in adjacency.keys() {
+		if visited.contains(start) || adjacency[start].is_empty() {
 			continue;
 		}
-		let neighbors = adjacency.get(&start).cloned().unwrap_or_default();
-		// Lone AMD cards (no xGMI peers) handled by the single-card fallback.
-		if neighbors.is_empty() {
-			continue;
-		}
-		let mut queue = vec![start.clone()];
 		let mut group: Vec<AcceleratorId> = Vec::new();
+		let mut queue = vec![start];
 		while let Some(n) = queue.pop() {
-			if !visited.insert(n.clone()) {
+			if !visited.insert(n) {
 				continue;
 			}
 			group.push(n.clone());
-			if let Some(next) = adjacency.get(&n) {
-				for m in next {
-					if !visited.contains(m) {
-						queue.push(m.clone());
-					}
-				}
+			if let Some(neighbors) = adjacency.get(n) {
+				queue.extend(neighbors.iter().filter(|m| !visited.contains(*m)));
 			}
 		}
 		group.sort_by(|a, b| a.pci_addr.cmp(&b.pci_addr));
-		groups.push((group, FabricKind::XGmi));
+		groups.push(group);
 	}
 	groups
+}
+
+fn assign_fabric(accelerators: &mut [Accelerator], members: &[AcceleratorId], id: &str) {
+	for m in members {
+		if let Some(a) = accelerators.iter_mut().find(|a| a.id == *m) {
+			a.fabric_domain = Some(id.to_string());
+		}
+	}
 }
 
 /// xGMI peer list lives in a few different sysfs files across kernel
 /// versions. Try the well-known names; return an empty list if none work.
 fn read_xgmi_peers(device_dir: &Path) -> Vec<String> {
-	for name in &["xgmi_peer_links", "xgmi_phy_id", "xgmi_link_status"] {
-		let p = device_dir.join(name);
-		if let Ok(s) = std::fs::read_to_string(&p) {
-			let peers: Vec<String> = s
-				.split_ascii_whitespace()
-				.filter(|tok| tok.contains(':'))
-				.map(|tok| tok.to_string())
-				.collect();
-			if !peers.is_empty() {
-				return peers;
-			}
+	for name in ["xgmi_peer_links", "xgmi_phy_id", "xgmi_link_status"] {
+		let Ok(s) = std::fs::read_to_string(device_dir.join(name)) else { continue };
+		let peers: Vec<String> =
+			s.split_ascii_whitespace().filter(|t| t.contains(':')).map(str::to_string).collect();
+		if !peers.is_empty() {
+			return peers;
 		}
 	}
 	Vec::new()
@@ -140,7 +125,7 @@ fn read_xgmi_peers(device_dir: &Path) -> Vec<String> {
 /// useful for cross-node intent like RDMA-fabric IDs that are config-fed,
 /// not relevant for intra-node IDs which are always node-local).
 pub fn stable_domain_id(members: &[AcceleratorId]) -> String {
-	let mut sorted: Vec<String> = members.iter().map(|m| m.pci_addr.clone()).collect();
+	let mut sorted: Vec<&str> = members.iter().map(|m| m.pci_addr.as_str()).collect();
 	sorted.sort();
 	let mut hasher = DefaultHasher::new();
 	for m in &sorted {

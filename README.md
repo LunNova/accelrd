@@ -100,18 +100,24 @@ follow-up if richer Nvidia coverage becomes load-bearing.
 
 ## Status
 
-- ✅ AMD sensor (sysfs).
+- ✅ AMD sensor (sysfs, including SR-IOV capacity surfacing).
 - ✅ Nvidia sensor (sysfs / proc).
-- ✅ Multi-vendor + multi-card + partitioning detection.
+- ✅ Intel sensor (i915 / Xe sysfs).
+- ✅ Multi-vendor + multi-card + partitioning detection (DRM-share + SR-IOV numvfs).
 - ✅ UMA detection (GTT-vs-VRAM heuristic).
 - ✅ Topology discovery (NUMA + xGMI; PCIe fallback).
 - ✅ OTLP exporter (metrics, logs, traces over HTTP/protobuf).
 - ✅ Hierarchical label generation (Kueue-TAS-compatible).
 - ✅ Preflight trait + placeholder + Skipped semantics.
+- ✅ Sysfs-friendly preflight checks: sensor.readable, drm.render_node_present,
+  driver.loaded, temperature.below_throttle, memory.floor.
 - ✅ K8s labeler (auto-disabled outside cluster).
 - ✅ K8s labeler in-cluster PATCH path (RFC 7396 merge, retry/backoff, stale-key removal).
 - ✅ Manifests (DaemonSet YAML + RBAC + namespace, sysfs/proc hostPath read-only).
 - ✅ Nix flake (rust-overlay + pre-commit hooks mirroring mutel's setup).
-- ⏳ Real preflight checks (rccl loopback, ECC, firmware, etc.).
-- ⏳ DRA `ResourceSlice` driver.
-- ⏳ Intel iGPU sensor (i915 sysfs).
+- ⏳ Vendor-runtime preflight checks (rccl/nccl loopback, ECC scrub, firmware
+  version) — these need vendor SDKs or a sidecar container, deferred to a
+  separate runtime-checks module.
+- ⏳ DRA `ResourceSlice` driver — separate workstream.
+- ⏳ LLDP-driven rack discovery — needs lldpd integration; config-fed today.
+- ⏳ Cross-node fabric-domain reconciliation — cluster-side concern.

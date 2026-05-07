@@ -8,6 +8,7 @@
 
 pub mod amd;
 pub mod common;
+pub mod intel;
 pub mod nvidia;
 
 use std::fmt;
@@ -171,10 +172,13 @@ pub trait AcceleratorSensor: Send + Sync {
 /// Walk `/sys/class/drm/card*` and dispatch each card to the right vendor
 /// backend. Cards behind unrecognised PCI vendors are skipped (logged).
 pub async fn enumerate_all() -> anyhow::Result<(Vec<Accelerator>, Vec<Box<dyn AcceleratorSensor>>)> {
-	let mut all = Vec::new();
-	let backends: Vec<Box<dyn AcceleratorSensor>> =
-		vec![Box::new(amd::AmdSysfsSensor), Box::new(nvidia::NvidiaSysfsSensor)];
+	let backends: Vec<Box<dyn AcceleratorSensor>> = vec![
+		Box::new(amd::AmdSysfsSensor),
+		Box::new(nvidia::NvidiaSysfsSensor),
+		Box::new(intel::IntelSysfsSensor),
+	];
 
+	let mut all = Vec::new();
 	for backend in &backends {
 		match backend.enumerate().await {
 			Ok(mut accels) => {

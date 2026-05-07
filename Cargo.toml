@@ -27,6 +27,7 @@ opentelemetry-otlp = { version = "0.31", features = [
 	"reqwest-blocking-client",
 ] }
 opentelemetry-appender-tracing = "0.31"
+tracing-opentelemetry = "0.32"
 
 # K8s client. Default features include client + rustls-tls + ring; that's
 # what we need for in-cluster service-account auth. Auto-disabled at

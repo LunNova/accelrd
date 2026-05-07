@@ -75,6 +75,10 @@ spec:
           image: ghcr.io/lunnova/accelrd:latest
           imagePullPolicy: IfNotPresent
           args:
+            # The accelrd binary is a multi-subcommand toolkit; this manifest
+            # is the per-node daemon. Sibling deployments (prober, probe pods
+            # created by it) live under manifests/prober/.
+            - daemon
             - --otlp-endpoint=$(ACCELRD_OTLP_ENDPOINT)
           env:
             # Downward API: feed the pod's own identity into the daemon

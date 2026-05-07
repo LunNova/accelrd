@@ -11,7 +11,7 @@ pub mod labeler;
 
 use std::path::Path;
 
-use crate::config::Args;
+use crate::config::Resolved;
 
 /// "Are we running in a Kubernetes pod with a usable service account?"
 /// Cheap, no network. Returns false on dev boxes.
@@ -20,6 +20,6 @@ pub fn looks_in_cluster() -> bool {
 	Path::new(TOKEN).exists() && std::env::var_os("KUBERNETES_SERVICE_HOST").is_some()
 }
 
-pub fn enabled(args: &Args) -> bool {
+pub fn enabled(args: &Resolved) -> bool {
 	!args.no_k8s && looks_in_cluster()
 }

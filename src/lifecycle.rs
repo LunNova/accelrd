@@ -12,7 +12,7 @@ use tracing_subscriber::Layer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-use crate::config::Args;
+use crate::config::Resolved;
 use crate::exporter;
 use crate::k8s::{self, facts, labeler::OptionalLabeler};
 use crate::preflight::default_registry;
@@ -21,7 +21,7 @@ use crate::telemetry::live;
 use crate::telemetry::preflight::{self as pf, PreflightInputs};
 use crate::topology::{discover, labels as topo_labels};
 
-pub async fn run(args: Args) -> anyhow::Result<()> {
+pub async fn run(args: Resolved) -> anyhow::Result<()> {
 	let node_name = facts::node_name(&args);
 	let providers = exporter::init(&args, &node_name)?;
 	init_tracing(&providers);

@@ -13,7 +13,7 @@ use opentelemetry::{KeyValue, global};
 use opentelemetry_otlp::{Protocol, WithExportConfig};
 use opentelemetry_sdk::Resource;
 
-use crate::config::Args;
+use crate::config::Resolved;
 
 const EXPORT_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -39,7 +39,7 @@ fn log_shutdown<E: std::fmt::Display>(name: &str, result: Result<(), E>) {
 	}
 }
 
-pub fn init(args: &Args, node_name: &str) -> anyhow::Result<Providers> {
+pub fn init(args: &Resolved, node_name: &str) -> anyhow::Result<Providers> {
 	let endpoint = args.otlp_endpoint.trim_end_matches('/');
 	let resource = build_resource(args, node_name);
 
@@ -91,7 +91,7 @@ pub fn init(args: &Args, node_name: &str) -> anyhow::Result<Providers> {
 /// In a K8s pod, the `k8s.*` block is populated from the SA namespace file
 /// plus downward-API env vars set by the DaemonSet manifest. Outside a
 /// pod, the `k8s.*` block is omitted.
-fn build_resource(args: &Args, node_name: &str) -> Resource {
+fn build_resource(args: &Resolved, node_name: &str) -> Resource {
 	let mut attrs: BTreeMap<String, String> = BTreeMap::new();
 
 	// Service identity beyond what the SDK detectors handle. The

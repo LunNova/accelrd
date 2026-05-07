@@ -4,9 +4,9 @@
 //! Best-effort node identity. Prefer `--node-name`, then `NODE_NAME`,
 //! then `/proc/sys/kernel/hostname`.
 
-use crate::config::Args;
+use crate::config::Resolved;
 
-pub fn node_name(args: &Args) -> String {
+pub fn node_name(args: &Resolved) -> String {
 	args.node_name
 		.clone()
 		.or_else(|| std::env::var("NODE_NAME").ok().filter(|s| !s.is_empty()))

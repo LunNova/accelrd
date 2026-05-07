@@ -12,13 +12,13 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::time::Duration;
 
-use crate::config::Args;
+use crate::config::Resolved;
 use crate::sensors::{Accelerator, AcceleratorId, Vendor};
 
 use super::lldp;
 use super::{FabricDomain, FabricKind, NodeTopology};
 
-pub async fn discover(args: &Args, accelerators: &mut [Accelerator]) -> NodeTopology {
+pub async fn discover(args: &Resolved, accelerators: &mut [Accelerator]) -> NodeTopology {
 	let mut topology = NodeTopology {
 		region: std::env::var("ACCELRD_REGION").ok(),
 		zone: std::env::var("ACCELRD_ZONE").ok(),

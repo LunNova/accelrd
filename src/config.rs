@@ -1,58 +1,113 @@
 // SPDX-FileCopyrightText: 2026 LunNova
 // SPDX-License-Identifier: CC0-1.0
 
-use clap::Parser;
+//! Daemon-subcommand args. argh's policy is "no env-var support in the
+//! parser" — keeping CLI parsing and env handling separate. We respect
+//! that by parsing CLI flags as `Option<T>` (i.e. "explicitly set?") and
+//! folding env fallbacks + hardcoded defaults in a small `resolve()` step
+//! before the daemon starts.
 
-#[derive(Parser, Debug, Clone)]
-#[command(
-	name = "accelrd",
-	about = "Vendor-neutral accelerator readiness daemon (sysfs-only sensors, OTLP telemetry, K8s labels)"
-)]
+use argh::FromArgs;
+
+/// Per-node daemon: sensor enumeration, preflight, OTLP, K8s node labels.
+#[derive(FromArgs, Debug, Clone)]
+#[argh(subcommand, name = "daemon")]
 pub struct Args {
-	/// OTLP/HTTP base endpoint. Per-signal paths /v1/{traces,metrics,logs} are appended.
-	#[arg(long, default_value = "http://127.0.0.1:4318", env = "ACCELRD_OTLP_ENDPOINT")]
-	pub otlp_endpoint: String,
+	/// OTLP/HTTP base endpoint, /v1/{traces,metrics,logs} appended
+	/// (env: ACCELRD_OTLP_ENDPOINT; default: http://127.0.0.1:4318)
+	#[argh(option)]
+	pub otlp_endpoint: Option<String>,
 
-	/// Live telemetry emit interval, seconds.
-	#[arg(long, default_value_t = 5, env = "ACCELRD_LIVE_INTERVAL_SECS")]
-	pub live_interval_secs: u64,
+	/// live telemetry emit interval, seconds (env: ACCELRD_LIVE_INTERVAL_SECS; default: 5)
+	#[argh(option)]
+	pub live_interval_secs: Option<u64>,
 
-	/// Preflight cycle interval, seconds.
-	#[arg(long, default_value_t = 30, env = "ACCELRD_PREFLIGHT_INTERVAL_SECS")]
-	pub preflight_interval_secs: u64,
+	/// preflight cycle interval, seconds (env: ACCELRD_PREFLIGHT_INTERVAL_SECS; default: 30)
+	#[argh(option)]
+	pub preflight_interval_secs: Option<u64>,
 
-	/// Datacenter row / PDU domain. Opaque ID, used to label the node.
-	#[arg(long, env = "ACCELRD_BLOCK")]
+	/// datacenter row / PDU domain — opaque ID, used to label the node (env: ACCELRD_BLOCK)
+	#[argh(option)]
 	pub block: Option<String>,
 
-	/// Leaf-switch (TOR) rack ID. Opaque, must match across nodes on the same TOR.
-	#[arg(long, env = "ACCELRD_RACK")]
+	/// leaf-switch (TOR) rack ID — opaque, must match across same-TOR nodes (env: ACCELRD_RACK)
+	#[argh(option)]
 	pub rack: Option<String>,
 
-	/// Override OTel `service.name` resource attribute.
-	#[arg(long, default_value = "accelrd", env = "OTEL_SERVICE_NAME")]
-	pub service_name: String,
+	/// override OTel `service.name` resource attribute (env: OTEL_SERVICE_NAME; default: accelrd)
+	#[argh(option)]
+	pub service_name: Option<String>,
 
-	/// Override the auto-detected node name (defaults to `gethostname` / NODE_NAME env).
-	#[arg(long, env = "NODE_NAME")]
+	/// override the auto-detected node name (env: NODE_NAME)
+	#[argh(option)]
 	pub node_name: Option<String>,
 
-	/// Run one preflight cycle and one live snapshot, then exit. Used in tests.
-	#[arg(long)]
+	/// run one preflight cycle and one live snapshot, then exit
+	#[argh(switch)]
 	pub once: bool,
 
-	/// Skip the K8s labeler entirely even if a service-account token is present.
-	#[arg(long)]
+	/// skip the K8s labeler entirely even if a service-account token is present
+	#[argh(switch)]
 	pub no_k8s: bool,
 
-	/// Disable LLDP-based rack discovery. Useful when the daemon lacks
-	/// CAP_NET_RAW and you'd rather skip the wait than log noise.
-	#[arg(long)]
+	/// disable LLDP-based rack discovery; useful when the daemon lacks CAP_NET_RAW
+	#[argh(switch)]
 	pub no_lldp: bool,
 
-	/// LLDP capture timeout in seconds. Default switches advertise every 30s,
-	/// so 60 catches at least one frame; bump higher in lossy networks. Set
-	/// to 0 to skip discovery (equivalent to --no-lldp).
-	#[arg(long, default_value_t = 60, env = "ACCELRD_LLDP_TIMEOUT_SECS")]
+	/// LLDP capture timeout in seconds — switches advertise every 30s, so 60
+	/// catches at least one frame; 0 = skip (env: ACCELRD_LLDP_TIMEOUT_SECS; default: 60)
+	#[argh(option)]
+	pub lldp_timeout_secs: Option<u64>,
+}
+
+/// Args with all env/default fallbacks applied. Internal layer above
+/// `Args` so the rest of the daemon can take plain values.
+#[derive(Debug, Clone)]
+pub struct Resolved {
+	pub otlp_endpoint: String,
+	pub live_interval_secs: u64,
+	pub preflight_interval_secs: u64,
+	pub block: Option<String>,
+	pub rack: Option<String>,
+	pub service_name: String,
+	pub node_name: Option<String>,
+	pub once: bool,
+	pub no_k8s: bool,
+	pub no_lldp: bool,
 	pub lldp_timeout_secs: u64,
+}
+
+impl Args {
+	pub fn resolve(self) -> Resolved {
+		Resolved {
+			otlp_endpoint: self
+				.otlp_endpoint
+				.or_else(|| env_string("ACCELRD_OTLP_ENDPOINT"))
+				.unwrap_or_else(|| "http://127.0.0.1:4318".into()),
+			live_interval_secs: self.live_interval_secs.or_else(|| env_u64("ACCELRD_LIVE_INTERVAL_SECS")).unwrap_or(5),
+			preflight_interval_secs: self
+				.preflight_interval_secs
+				.or_else(|| env_u64("ACCELRD_PREFLIGHT_INTERVAL_SECS"))
+				.unwrap_or(30),
+			block: self.block.or_else(|| env_string("ACCELRD_BLOCK")),
+			rack: self.rack.or_else(|| env_string("ACCELRD_RACK")),
+			service_name: self
+				.service_name
+				.or_else(|| env_string("OTEL_SERVICE_NAME"))
+				.unwrap_or_else(|| "accelrd".into()),
+			node_name: self.node_name.or_else(|| env_string("NODE_NAME")),
+			once: self.once,
+			no_k8s: self.no_k8s,
+			no_lldp: self.no_lldp,
+			lldp_timeout_secs: self.lldp_timeout_secs.or_else(|| env_u64("ACCELRD_LLDP_TIMEOUT_SECS")).unwrap_or(60),
+		}
+	}
+}
+
+pub fn env_string(key: &str) -> Option<String> {
+	std::env::var(key).ok().filter(|s| !s.is_empty())
+}
+
+pub fn env_u64(key: &str) -> Option<u64> {
+	std::env::var(key).ok().and_then(|s| s.parse().ok())
 }

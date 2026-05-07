@@ -65,7 +65,11 @@ impl AcceleratorSensor for NvidiaSysfsSensor {
 	}
 }
 
-fn build_accelerator(drm_index: u32, device_dir: std::path::PathBuf, proc_models: &HashMap<String, String>) -> Accelerator {
+fn build_accelerator(
+	drm_index: u32,
+	device_dir: std::path::PathBuf,
+	proc_models: &HashMap<String, String>,
+) -> Accelerator {
 	let device_id = common::read_hex_u16(&device_dir.join("device")).unwrap_or(0);
 	let pci_addr = common::pci_addr_from_device_dir(&device_dir).unwrap_or_default();
 
@@ -79,10 +83,18 @@ fn build_accelerator(drm_index: u32, device_dir: std::path::PathBuf, proc_models
 	// BAR1 (64-bit prefetchable). On a 4090 this is 32 GiB.
 	let bar1 = common::read_pci_bars(&device_dir).get(1).copied().unwrap_or(0);
 	let memory_total_bytes = (bar1 > 4 * 1024 * 1024).then_some(bar1);
-	let memory_kind = if memory_total_bytes.is_some() { MemoryKind::Dedicated } else { MemoryKind::Unknown };
+	let memory_kind = if memory_total_bytes.is_some() {
+		MemoryKind::Dedicated
+	} else {
+		MemoryKind::Unknown
+	};
 
 	Accelerator {
-		id: AcceleratorId { vendor: Vendor::Nvidia, drm_index, pci_addr },
+		id: AcceleratorId {
+			vendor: Vendor::Nvidia,
+			drm_index,
+			pci_addr,
+		},
 		model,
 		memory_kind,
 		memory_total_bytes,
@@ -101,10 +113,16 @@ fn build_accelerator(drm_index: u32, device_dir: std::path::PathBuf, proc_models
 /// recover canonical model strings the closed driver doesn't put in sysfs.
 fn read_proc_nvidia_models() -> HashMap<String, String> {
 	let mut out = HashMap::new();
-	let Ok(entries) = fs::read_dir("/proc/driver/nvidia/gpus") else { return out };
+	let Ok(entries) = fs::read_dir("/proc/driver/nvidia/gpus") else {
+		return out;
+	};
 	for entry in entries.flatten() {
-		let Some(bus_id) = entry.file_name().to_str().map(str::to_ascii_lowercase) else { continue };
-		let Ok(text) = fs::read_to_string(entry.path().join("information")) else { continue };
+		let Some(bus_id) = entry.file_name().to_str().map(str::to_ascii_lowercase) else {
+			continue;
+		};
+		let Ok(text) = fs::read_to_string(entry.path().join("information")) else {
+			continue;
+		};
 		if let Some(model) = parse_nvidia_info_field(&text, "Model") {
 			out.insert(bus_id, model);
 		}

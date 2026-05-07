@@ -23,7 +23,7 @@ use crate::topology::{discover, labels as topo_labels};
 
 pub async fn run(args: Resolved) -> anyhow::Result<()> {
 	let node_name = facts::node_name(&args);
-	let providers = exporter::init(&args, &node_name)?;
+	let providers = exporter::init(&args.otlp_endpoint, &args.service_name, &node_name)?;
 	init_tracing(&providers);
 
 	let (mut accelerators, backends) = enumerate_all().await?;
@@ -119,7 +119,9 @@ fn init_tracing(providers: &exporter::Providers) {
 	};
 
 	let otel_tracer = providers.tracer.tracer("accelrd");
-	let span_layer = tracing_opentelemetry::layer().with_tracer(otel_tracer).with_filter(otel_filter());
+	let span_layer = tracing_opentelemetry::layer()
+		.with_tracer(otel_tracer)
+		.with_filter(otel_filter());
 	let log_layer = OpenTelemetryTracingBridge::new(&providers.logger).with_filter(otel_filter());
 
 	tracing_subscriber::registry()

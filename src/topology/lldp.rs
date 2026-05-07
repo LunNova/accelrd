@@ -97,8 +97,12 @@ pub async fn discover(timeout: Duration) -> Vec<LldpNeighbor> {
 	let mut by_iface: HashMap<String, LldpNeighbor> = HashMap::new();
 
 	loop {
-		let Some(remaining) = deadline.checked_duration_since(Instant::now()) else { break };
-		let Ok(Ok(mut guard)) = tokio::time::timeout(remaining, async_fd.readable()).await else { break };
+		let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+			break;
+		};
+		let Ok(Ok(mut guard)) = tokio::time::timeout(remaining, async_fd.readable()).await else {
+			break;
+		};
 
 		let mut buf = [0u8; 1500];
 		let mut sa: libc::sockaddr_ll = unsafe { std::mem::zeroed() };
@@ -114,12 +118,15 @@ pub async fn discover(timeout: Duration) -> Vec<LldpNeighbor> {
 					&mut sa_len,
 				)
 			};
-			if n < 0 { Err(io::Error::last_os_error()) } else { Ok(n as usize) }
+			if n < 0 {
+				Err(io::Error::last_os_error())
+			} else {
+				Ok(n as usize)
+			}
 		});
 		match recv {
 			Ok(Ok(n)) => {
-				let iface = ifindex_to_name(sa.sll_ifindex as u32)
-					.unwrap_or_else(|| format!("if{}", sa.sll_ifindex));
+				let iface = ifindex_to_name(sa.sll_ifindex as u32).unwrap_or_else(|| format!("if{}", sa.sll_ifindex));
 				if let Some(neighbor) = parse_lldpdu(&buf[..n], iface.clone()) {
 					tracing::debug!(
 						iface = %iface,
@@ -207,10 +214,14 @@ fn subscribe_lldp_multicast(fd: std::os::fd::RawFd, ifindex: i32) {
 /// Enumerate ifindex of Ethernet interfaces that are up and not loopback
 /// or obvious virtuals. We rely on /sys/class/net/<iface>/{ifindex,flags}.
 fn ethernet_ifindices() -> Vec<i32> {
-	let Ok(entries) = std::fs::read_dir("/sys/class/net") else { return Vec::new() };
+	let Ok(entries) = std::fs::read_dir("/sys/class/net") else {
+		return Vec::new();
+	};
 	let mut out = Vec::new();
 	for entry in entries.flatten() {
-		let Some(name) = entry.file_name().to_str().map(str::to_string) else { continue };
+		let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+			continue;
+		};
 		if name == "lo" {
 			continue;
 		}
@@ -221,7 +232,9 @@ fn ethernet_ifindices() -> Vec<i32> {
 			continue;
 		}
 		let ifindex_path = entry.path().join("ifindex");
-		let Some(idx) = std::fs::read_to_string(&ifindex_path).ok().and_then(|s| s.trim().parse::<i32>().ok())
+		let Some(idx) = std::fs::read_to_string(&ifindex_path)
+			.ok()
+			.and_then(|s| s.trim().parse::<i32>().ok())
 		else {
 			continue;
 		};
@@ -271,14 +284,25 @@ fn parse_lldpdu(buf: &[u8], interface: String) -> Option<LldpNeighbor> {
 			0 => break, // End of LLDPDU
 			1 => chassis = parse_chassis_id(val),
 			2 => port = parse_port_id(val),
-			5 => sysname = std::str::from_utf8(val).ok().filter(|s| !s.is_empty()).map(String::from),
+			5 => {
+				sysname = std::str::from_utf8(val)
+					.ok()
+					.filter(|s| !s.is_empty())
+					.map(String::from)
+			}
 			_ => {} // ignore other TLVs (port description, sys description, capabilities, mgmt addr, org-specific)
 		}
 	}
 
 	let (chassis_id, chassis_id_kind) = chassis?;
 	let port_id = port?;
-	Some(LldpNeighbor { interface, chassis_id, chassis_id_kind, port_id, system_name: sysname })
+	Some(LldpNeighbor {
+		interface,
+		chassis_id,
+		chassis_id_kind,
+		port_id,
+		system_name: sysname,
+	})
 }
 
 fn parse_chassis_id(val: &[u8]) -> Option<(String, ChassisIdKind)> {
@@ -303,7 +327,10 @@ fn parse_port_id(val: &[u8]) -> Option<String> {
 }
 
 fn mac_to_string(b: &[u8; 6]) -> String {
-	format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", b[0], b[1], b[2], b[3], b[4], b[5])
+	format!(
+		"{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+		b[0], b[1], b[2], b[3], b[4], b[5]
+	)
 }
 
 fn hex_encode(bytes: &[u8]) -> String {

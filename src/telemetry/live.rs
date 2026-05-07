@@ -36,7 +36,9 @@ async fn tick(
 	gauges: &mut GaugeCache,
 ) {
 	for accel in accelerators {
-		let Some(backend) = backends.iter().find(|b| b.vendor() == accel.id.vendor) else { continue };
+		let Some(backend) = backends.iter().find(|b| b.vendor() == accel.id.vendor) else {
+			continue;
+		};
 		let snapshot = match backend.snapshot(accel).await {
 			Ok(s) => s,
 			Err(e) => {

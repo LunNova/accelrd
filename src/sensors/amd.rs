@@ -15,9 +15,17 @@ use super::{Accelerator, AcceleratorId, AcceleratorSensor, Coverage, Measurement
 
 /// `(sysfs_filename, metric_name, description)` for each amdgpu memory gauge.
 const MEMORY_METRICS: &[(&str, &str, &str)] = &[
-	("mem_info_vram_total", "accel.memory.vram.total", "Dedicated VRAM size reported by amdgpu (small on iGPUs)."),
+	(
+		"mem_info_vram_total",
+		"accel.memory.vram.total",
+		"Dedicated VRAM size reported by amdgpu (small on iGPUs).",
+	),
 	("mem_info_vram_used", "accel.memory.vram.used", "Used VRAM bytes."),
-	("mem_info_gtt_total", "accel.memory.gtt.total", "GTT (host aperture) size — this is the UMA carrier on iGPUs."),
+	(
+		"mem_info_gtt_total",
+		"accel.memory.gtt.total",
+		"GTT (host aperture) size — this is the UMA carrier on iGPUs.",
+	),
 	("mem_info_gtt_used", "accel.memory.gtt.used", "Used GTT bytes."),
 	(
 		"mem_info_visible_vram_total",
@@ -92,7 +100,11 @@ fn build_accelerator(drm_index: u32, device_dir: PathBuf) -> Accelerator {
 		.and_then(|p| p.file_name()?.to_str()?.parse::<u32>().ok());
 
 	Accelerator {
-		id: AcceleratorId { vendor: Vendor::Amd, drm_index, pci_addr },
+		id: AcceleratorId {
+			vendor: Vendor::Amd,
+			drm_index,
+			pci_addr,
+		},
 		model: amd_model_name(device_id, &device_dir),
 		memory_kind,
 		memory_total_bytes,

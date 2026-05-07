@@ -65,27 +65,47 @@ impl CheckOutcome {
 	/// Skipped outcome with no message — the common "no accelerator in
 	/// context" early return for `SingleAccelerator`-scoped checks.
 	pub fn skipped() -> Self {
-		Self { status: Status::Skipped, message: None, measurements: Vec::new() }
+		Self {
+			status: Status::Skipped,
+			message: None,
+			measurements: Vec::new(),
+		}
 	}
 
 	/// Skipped with an explanatory message.
 	pub fn skipped_with(msg: impl Into<String>) -> Self {
-		Self { status: Status::Skipped, message: Some(msg.into()), measurements: Vec::new() }
+		Self {
+			status: Status::Skipped,
+			message: Some(msg.into()),
+			measurements: Vec::new(),
+		}
 	}
 
 	/// Pass with no measurements.
 	pub fn pass() -> Self {
-		Self { status: Status::Pass, message: None, measurements: Vec::new() }
+		Self {
+			status: Status::Pass,
+			message: None,
+			measurements: Vec::new(),
+		}
 	}
 
 	/// Fail with an explanatory message.
 	pub fn fail(msg: impl Into<String>) -> Self {
-		Self { status: Status::Fail, message: Some(msg.into()), measurements: Vec::new() }
+		Self {
+			status: Status::Fail,
+			message: Some(msg.into()),
+			measurements: Vec::new(),
+		}
 	}
 
 	/// Warn with an explanatory message.
 	pub fn warn(msg: impl Into<String>) -> Self {
-		Self { status: Status::Warn, message: Some(msg.into()), measurements: Vec::new() }
+		Self {
+			status: Status::Warn,
+			message: Some(msg.into()),
+			measurements: Vec::new(),
+		}
 	}
 }
 

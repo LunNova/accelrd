@@ -19,6 +19,8 @@ use opentelemetry::global;
 use opentelemetry::metrics::{Gauge, Meter};
 use tracing::{Instrument, field};
 
+use crate::time::now_rfc3339;
+
 use crate::k8s::labeler::OptionalLabeler;
 use crate::preflight::{CheckContext, CheckOutcome, NodeReadiness, PreflightCheck, Status, aggregate};
 use crate::sensors::Accelerator;
@@ -58,7 +60,12 @@ impl PreflightMetrics {
 			.with_unit("1")
 			.with_description("1 if the check Passed; 0 for Warn/Fail; not emitted for Skipped.")
 			.build();
-		Self { meter, duration_g, pass_g, obs_cache: GaugeCache::default() }
+		Self {
+			meter,
+			duration_g,
+			pass_g,
+			obs_cache: GaugeCache::default(),
+		}
 	}
 
 	fn record(&mut self, check: &dyn PreflightCheck, accel: &Accelerator, outcome: &CheckOutcome, elapsed_ms: f64) {
@@ -68,7 +75,8 @@ impl PreflightMetrics {
 
 		self.duration_g.record(elapsed_ms, &attrs);
 		if outcome.status != Status::Skipped {
-			self.pass_g.record(if outcome.status == Status::Pass { 1.0 } else { 0.0 }, &attrs);
+			self.pass_g
+				.record(if outcome.status == Status::Pass { 1.0 } else { 0.0 }, &attrs);
 		}
 
 		for m in &outcome.measurements {
@@ -92,7 +100,9 @@ pub async fn run(inputs: PreflightInputs, labeler: OptionalLabeler) {
 			failed = field::Empty,
 		);
 
-		let cycle = run_cycle(&inputs, &mut metrics, &labeler).instrument(cycle_span.clone()).await;
+		let cycle = run_cycle(&inputs, &mut metrics, &labeler)
+			.instrument(cycle_span.clone())
+			.await;
 
 		cycle_span.record("inference", cycle.inference.label_value());
 		cycle_span.record("training", cycle.training.label_value());
@@ -147,11 +157,20 @@ async fn run_cycle(inputs: &PreflightInputs, metrics: &mut PreflightMetrics, lab
 	let training = inference;
 
 	let mut labels = inputs.label_base.clone();
-	labels.labels.insert("accel-ready.lunnova.dev/inference".into(), inference.label_value().into());
-	labels.labels.insert("accel-ready.lunnova.dev/training".into(), training.label_value().into());
-	labels.annotations.insert("accel-ready.lunnova.dev/last-check".into(), now_rfc3339());
+	labels.labels.insert(
+		"accel-ready.lunnova.dev/inference".into(),
+		inference.label_value().into(),
+	);
+	labels
+		.labels
+		.insert("accel-ready.lunnova.dev/training".into(), training.label_value().into());
+	labels
+		.annotations
+		.insert("accel-ready.lunnova.dev/last-check".into(), now_rfc3339());
 	if !failed_checks.is_empty() {
-		labels.annotations.insert("accel-ready.lunnova.dev/failed".into(), failed_checks.join(","));
+		labels
+			.annotations
+			.insert("accel-ready.lunnova.dev/failed".into(), failed_checks.join(","));
 	}
 	labeler.reconcile(&labels).await;
 
@@ -164,14 +183,23 @@ async fn run_cycle(inputs: &PreflightInputs, metrics: &mut PreflightMetrics, lab
 		"preflight_cycle complete",
 	);
 
-	CycleResult { inference, training, ran: all_outcomes.len(), failed: failed_checks.len() }
+	CycleResult {
+		inference,
+		training,
+		ran: all_outcomes.len(),
+		failed: failed_checks.len(),
+	}
 }
 
 /// Run one (check, accelerator). The caller wraps this in a tracing
 /// span so the OTel exporter sees the right parent/child relationship.
 async fn run_one_check(check: &dyn PreflightCheck, accel: &Accelerator) -> (CheckOutcome, f64) {
 	let started = Instant::now();
-	let outcome = check.run(&CheckContext { accelerator: Some(accel) }).await;
+	let outcome = check
+		.run(&CheckContext {
+			accelerator: Some(accel),
+		})
+		.await;
 	let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
 
 	let span = tracing::Span::current();
@@ -181,28 +209,4 @@ async fn run_one_check(check: &dyn PreflightCheck, accel: &Accelerator) -> (Chec
 	}
 
 	(outcome, elapsed_ms)
-}
-
-fn now_rfc3339() -> String {
-	use std::time::{SystemTime, UNIX_EPOCH};
-	let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-	let (s, m, h) = (secs % 60, (secs / 60) % 60, (secs / 3600) % 24);
-	let (y, mo, d) = days_to_ymd((secs / 86400) as i64);
-	format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
-}
-
-/// Howard Hinnant's date algorithm — `days_since_epoch` is 1970-01-01 == 0.
-/// See <https://howardhinnant.github.io/date_algorithms.html#civil_from_days>.
-fn days_to_ymd(days_since_epoch: i64) -> (i64, u32, u32) {
-	let z = days_since_epoch + 719_468;
-	let era = if z >= 0 { z / 146_097 } else { (z - 146_096) / 146_097 };
-	let doe = (z - era * 146_097) as u64;
-	let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-	let y = yoe as i64 + era * 400;
-	let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-	let mp = (5 * doy + 2) / 153;
-	let d = doy - (153 * mp + 2) / 5 + 1;
-	let m = if mp < 10 { mp + 3 } else { mp - 9 };
-	let y = if m <= 2 { y + 1 } else { y };
-	(y, m as u32, d as u32)
 }

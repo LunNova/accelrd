@@ -13,8 +13,6 @@ use opentelemetry::{KeyValue, global};
 use opentelemetry_otlp::{Protocol, WithExportConfig};
 use opentelemetry_sdk::Resource;
 
-use crate::config::Resolved;
-
 const EXPORT_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub struct Providers {
@@ -39,9 +37,9 @@ fn log_shutdown<E: std::fmt::Display>(name: &str, result: Result<(), E>) {
 	}
 }
 
-pub fn init(args: &Resolved, node_name: &str) -> anyhow::Result<Providers> {
-	let endpoint = args.otlp_endpoint.trim_end_matches('/');
-	let resource = build_resource(args, node_name);
+pub fn init(otlp_endpoint: &str, service_name: &str, node_name: &str) -> anyhow::Result<Providers> {
+	let endpoint = otlp_endpoint.trim_end_matches('/');
+	let resource = build_resource(service_name, node_name);
 
 	// Each signal builder (Span/Metric/Log) lives in a different module
 	// with a typestate that diverges after `.with_http()`, so the macro
@@ -91,13 +89,13 @@ pub fn init(args: &Resolved, node_name: &str) -> anyhow::Result<Providers> {
 /// In a K8s pod, the `k8s.*` block is populated from the SA namespace file
 /// plus downward-API env vars set by the DaemonSet manifest. Outside a
 /// pod, the `k8s.*` block is omitted.
-fn build_resource(args: &Resolved, node_name: &str) -> Resource {
+fn build_resource(service_name: &str, node_name: &str) -> Resource {
 	let mut attrs: BTreeMap<String, String> = BTreeMap::new();
 
 	// Service identity beyond what the SDK detectors handle. The
 	// `SdkProvidedResourceDetector` only sets a fallback service.name;
 	// we always set ours explicitly so it wins.
-	attrs.insert("service.name".into(), args.service_name.clone());
+	attrs.insert("service.name".into(), service_name.into());
 	attrs.insert("service.version".into(), env!("CARGO_PKG_VERSION").into());
 
 	// Host. `host.name` here means the *machine* hosting the process, which
@@ -186,7 +184,10 @@ fn populate_k8s_attrs(attrs: &mut BTreeMap<String, String>, node_name: &str) -> 
 }
 
 fn read_trimmed(path: &str) -> Option<String> {
-	std::fs::read_to_string(path).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+	std::fs::read_to_string(path)
+		.ok()
+		.map(|s| s.trim().to_string())
+		.filter(|s| !s.is_empty())
 }
 
 /// /etc/machine-id is canonical on systemd hosts; /var/lib/dbus/machine-id

@@ -3,7 +3,7 @@
 
 //! accelrd — vendor-neutral accelerator readiness toolkit.
 //!
-//! One binary, three deployment shapes:
+//! One binary, four deployment shapes:
 //!  * `accelrd daemon` — per-node DaemonSet. Reads accelerator state via
 //!    sysfs / /proc only, emits live OTLP metrics/logs/traces, reconciles
 //!    node labels for topology-aware schedulers.
@@ -11,7 +11,11 @@
 //!    RoCE bandwidth probes between nodes that share a topology rack.
 //!  * `accelrd probe` — one side of a paired probe (server or client),
 //!    wraps `ib_send_bw` / similar perftest tools, emits OTLP results.
+//!  * `accelrd admin` — read-only cluster console. Singleton Deployment
+//!    that surfaces topology + probe results from the K8s API and live
+//!    accelerator metrics from a mutel instance.
 
+mod admin;
 mod config;
 mod exporter;
 mod k8s;
@@ -21,6 +25,7 @@ mod probe;
 mod prober;
 mod sensors;
 mod telemetry;
+mod time;
 mod topology;
 
 use argh::FromArgs;
@@ -38,6 +43,7 @@ enum Cmd {
 	Daemon(config::Args),
 	Prober(prober::ProberArgs),
 	Probe(probe::ProbeArgs),
+	Admin(admin::AdminArgs),
 }
 
 #[tokio::main]
@@ -47,5 +53,6 @@ async fn main() -> anyhow::Result<()> {
 		Cmd::Daemon(args) => lifecycle::run(args.resolve()).await,
 		Cmd::Prober(args) => prober::run(args.resolve()).await,
 		Cmd::Probe(args) => probe::run(args.resolve()).await,
+		Cmd::Admin(args) => admin::run(args.resolve()?).await,
 	}
 }

@@ -27,7 +27,9 @@ pub fn enumerate_for_vendor(vendor: Vendor, build: impl Fn(u32, PathBuf) -> Acce
 /// `/sys/class/drm/cardN/device` resolves to under `/sys/devices/...`.
 pub fn drm_cards() -> Vec<(u32, PathBuf)> {
 	let drm_root = Path::new("/sys/class/drm");
-	let Ok(entries) = fs::read_dir(drm_root) else { return Vec::new() };
+	let Ok(entries) = fs::read_dir(drm_root) else {
+		return Vec::new();
+	};
 	let mut out: Vec<(u32, PathBuf)> = entries
 		.flatten()
 		.filter_map(|entry| {
@@ -56,7 +58,9 @@ pub fn read_i32(path: &Path) -> Option<i32> {
 }
 
 pub fn read_string_first_line(path: &Path) -> Option<String> {
-	fs::read_to_string(path).ok().and_then(|s| s.lines().next().map(|l| l.trim().to_string()))
+	fs::read_to_string(path)
+		.ok()
+		.and_then(|s| s.lines().next().map(|l| l.trim().to_string()))
 }
 
 /// Parse `/sys/...local_cpulist` ("0-31" or "0-7,16-23") into individual
@@ -87,7 +91,9 @@ pub fn read_local_cpus(device_dir: &Path) -> Vec<usize> {
 /// Each line is `start end flags` in hex; BAR size = end - start + 1 when
 /// start != 0, else 0.
 pub fn read_pci_bars(device_dir: &Path) -> Vec<u64> {
-	let Ok(s) = fs::read_to_string(device_dir.join("resource")) else { return Vec::new() };
+	let Ok(s) = fs::read_to_string(device_dir.join("resource")) else {
+		return Vec::new();
+	};
 	s.lines()
 		.map(|line| {
 			let mut parts = line.split_ascii_whitespace().map(parse_hex);
@@ -105,13 +111,19 @@ fn parse_hex(s: &str) -> u64 {
 /// Extract PCI address (e.g. `0000:01:00.0`) from a canonicalized device dir like
 /// `/sys/devices/pci0000:00/0000:00:01.1/0000:01:00.0`.
 pub fn pci_addr_from_device_dir(device_dir: &Path) -> Option<String> {
-	device_dir.file_name()?.to_str().filter(|s| s.contains(':')).map(str::to_string)
+	device_dir
+		.file_name()?
+		.to_str()
+		.filter(|s| s.contains(':'))
+		.map(str::to_string)
 }
 
 /// Best-effort hwmon discovery: list `<device>/hwmon/hwmon*/` dirs.
 pub fn hwmon_dirs(device_dir: &Path) -> Vec<PathBuf> {
 	let hw = device_dir.join("hwmon");
-	let Ok(entries) = fs::read_dir(&hw) else { return Vec::new() };
+	let Ok(entries) = fs::read_dir(&hw) else {
+		return Vec::new();
+	};
 	entries
 		.flatten()
 		.filter(|entry| entry.file_name().to_string_lossy().starts_with("hwmon"))
@@ -122,7 +134,9 @@ pub fn hwmon_dirs(device_dir: &Path) -> Vec<PathBuf> {
 /// First hwmon temperature reading (in °C) for the device. None if no
 /// hwmon dir exposes `temp1_input`.
 pub fn hwmon_temperature_celsius(device_dir: &Path) -> Option<f64> {
-	hwmon_dirs(device_dir).into_iter().find_map(|hw| read_u64(&hw.join("temp1_input")).map(|t| t as f64 / 1000.0))
+	hwmon_dirs(device_dir)
+		.into_iter()
+		.find_map(|hw| read_u64(&hw.join("temp1_input")).map(|t| t as f64 / 1000.0))
 }
 
 /// Mark accelerators that share a parent PCI function as partitioned,
@@ -139,7 +153,11 @@ pub fn mark_partitions(accels: &mut [Accelerator]) {
 		}
 	}
 	for a in accels.iter_mut() {
-		let shared_parent = a.device_dir.parent().and_then(|p| counts.get(p)).is_some_and(|&c| c > 1);
+		let shared_parent = a
+			.device_dir
+			.parent()
+			.and_then(|p| counts.get(p))
+			.is_some_and(|&c| c > 1);
 		// SR-IOV: a non-zero numvfs configuration means the card is
 		// partitioned at the PCI level even if VFs aren't bound here.
 		let sriov_active = read_u64(&a.device_dir.join("sriov_numvfs")).unwrap_or(0) > 0;
@@ -160,7 +178,13 @@ pub fn sriov_capacity(device_dir: &Path) -> Option<(u64, u64)> {
 /// Build a `Measurement` with no extra attributes — the common case for
 /// every per-accelerator gauge we emit.
 pub fn measurement(name: &'static str, unit: &'static str, description: &'static str, value: f64) -> Measurement {
-	Measurement { name, unit, description, value, attrs: Vec::new() }
+	Measurement {
+		name,
+		unit,
+		description,
+		value,
+		attrs: Vec::new(),
+	}
 }
 
 /// `accel.sensor.health` measurement: 1.0 if the device's PCI vendor ID
@@ -180,5 +204,7 @@ pub fn sensor_health(device_dir: &Path, expected: Vendor) -> Measurement {
 /// enum. Returns `Vendor::Other` if the file is missing or the ID is
 /// unknown — backends use this to filter `drm_cards()` to their own.
 pub fn card_vendor(device_dir: &Path) -> Vendor {
-	read_hex_u16(&device_dir.join("vendor")).map(Vendor::from_pci_id).unwrap_or(Vendor::Other)
+	read_hex_u16(&device_dir.join("vendor"))
+		.map(Vendor::from_pci_id)
+		.unwrap_or(Vendor::Other)
 }

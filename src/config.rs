@@ -84,7 +84,10 @@ impl Args {
 				.otlp_endpoint
 				.or_else(|| env_string("ACCELRD_OTLP_ENDPOINT"))
 				.unwrap_or_else(|| "http://127.0.0.1:4318".into()),
-			live_interval_secs: self.live_interval_secs.or_else(|| env_u64("ACCELRD_LIVE_INTERVAL_SECS")).unwrap_or(5),
+			live_interval_secs: self
+				.live_interval_secs
+				.or_else(|| env_u64("ACCELRD_LIVE_INTERVAL_SECS"))
+				.unwrap_or(5),
 			preflight_interval_secs: self
 				.preflight_interval_secs
 				.or_else(|| env_u64("ACCELRD_PREFLIGHT_INTERVAL_SECS"))
@@ -99,7 +102,10 @@ impl Args {
 			once: self.once,
 			no_k8s: self.no_k8s,
 			no_lldp: self.no_lldp,
-			lldp_timeout_secs: self.lldp_timeout_secs.or_else(|| env_u64("ACCELRD_LLDP_TIMEOUT_SECS")).unwrap_or(60),
+			lldp_timeout_secs: self
+				.lldp_timeout_secs
+				.or_else(|| env_u64("ACCELRD_LLDP_TIMEOUT_SECS"))
+				.unwrap_or(60),
 		}
 	}
 }

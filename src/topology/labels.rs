@@ -29,7 +29,11 @@ impl LabelSet {
 		}
 		out.push_str("annotations:\n");
 		for (k, v) in &self.annotations {
-			let preview = if v.len() > 80 { format!("{}…", &v[..80]) } else { v.clone() };
+			let preview = if v.len() > 80 {
+				format!("{}…", &v[..80])
+			} else {
+				v.clone()
+			};
 			let _ = writeln!(out, "  {k} = {preview}");
 		}
 		out
@@ -53,10 +57,13 @@ pub fn build(topology: &NodeTopology, accelerators: &[Accelerator]) -> LabelSet 
 		*domain_counts.entry(d.id.as_str()).or_default() += d.member_accelerators.len();
 	}
 	for (id, count) in &domain_counts {
-		set.labels.insert(format!("accel-topo.lunnova.dev/fabric-domain.{id}"), count.to_string());
+		set.labels
+			.insert(format!("accel-topo.lunnova.dev/fabric-domain.{id}"), count.to_string());
 	}
-	set.labels
-		.insert("accel-topo.lunnova.dev/fabric-domains-count".into(), topology.fabric_domains.len().to_string());
+	set.labels.insert(
+		"accel-topo.lunnova.dev/fabric-domains-count".into(),
+		topology.fabric_domains.len().to_string(),
+	);
 
 	// Per-vendor / per-model / per-memory-kind counts.
 	let vendor_counts = count_by(accelerators, |a| a.id.vendor.slug().to_string());
@@ -71,13 +78,20 @@ pub fn build(topology: &NodeTopology, accelerators: &[Accelerator]) -> LabelSet 
 	let mut physical_funcs: BTreeMap<String, BTreeSet<PathBuf>> = BTreeMap::new();
 	for a in accelerators {
 		if let Some(parent) = a.device_dir.parent() {
-			physical_funcs.entry(a.id.vendor.slug().into()).or_default().insert(parent.to_path_buf());
+			physical_funcs
+				.entry(a.id.vendor.slug().into())
+				.or_default()
+				.insert(parent.to_path_buf());
 		}
 	}
 	for (vendor, funcs) in &physical_funcs {
-		set.labels.insert(format!("accel.lunnova.dev/vendor.{vendor}.physical-count"), funcs.len().to_string());
+		set.labels.insert(
+			format!("accel.lunnova.dev/vendor.{vendor}.physical-count"),
+			funcs.len().to_string(),
+		);
 	}
-	set.labels.insert("accel.lunnova.dev/total-count".into(), accelerators.len().to_string());
+	set.labels
+		.insert("accel.lunnova.dev/total-count".into(), accelerators.len().to_string());
 
 	// SR-IOV: surface configured + total VF capacity per physical card.
 	// Only emitted when the card actually exposes the sysfs files.
@@ -94,8 +108,10 @@ pub fn build(topology: &NodeTopology, accelerators: &[Accelerator]) -> LabelSet 
 		}
 	}
 	if sriov_seen {
-		set.labels.insert("accel.lunnova.dev/sriov.total".into(), sriov_total.to_string());
-		set.labels.insert("accel.lunnova.dev/sriov.configured".into(), sriov_used.to_string());
+		set.labels
+			.insert("accel.lunnova.dev/sriov.total".into(), sriov_total.to_string());
+		set.labels
+			.insert("accel.lunnova.dev/sriov.configured".into(), sriov_used.to_string());
 	}
 
 	// Inventory + fabric-graph annotations. Errors here are non-fatal: a
@@ -116,12 +132,17 @@ pub fn build(topology: &NodeTopology, accelerators: &[Accelerator]) -> LabelSet 
 		for n in &topology.lldp_neighbors {
 			let slug = n.rack_slug();
 			if chassis_seen.insert(n.chassis_id.as_str()) {
-				set.labels.insert(format!("accel-topo.lunnova.dev/lldp.chassis.{slug}"), "1".into());
+				set.labels
+					.insert(format!("accel-topo.lunnova.dev/lldp.chassis.{slug}"), "1".into());
 			}
 		}
-		set.labels.insert("accel-topo.lunnova.dev/lldp.chassis-count".into(), chassis_seen.len().to_string());
+		set.labels.insert(
+			"accel-topo.lunnova.dev/lldp.chassis-count".into(),
+			chassis_seen.len().to_string(),
+		);
 		if let Ok(s) = serde_json::to_string(&topology.lldp_neighbors) {
-			set.annotations.insert("accel-topo.lunnova.dev/lldp-neighbors".into(), s);
+			set.annotations
+				.insert("accel-topo.lunnova.dev/lldp-neighbors".into(), s);
 		}
 	}
 
@@ -190,5 +211,9 @@ fn slugify(s: &str) -> String {
 		}
 	}
 	let trimmed = out.trim_matches('-');
-	if trimmed.is_empty() { "unknown".into() } else { trimmed.to_string() }
+	if trimmed.is_empty() {
+		"unknown".into()
+	} else {
+		trimmed.to_string()
+	}
 }

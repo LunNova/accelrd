@@ -39,5 +39,17 @@ k8s-openapi = { version = "0.27", features = ["v1_31"] }
 # transitively by tokio; this just makes the dep explicit.
 libc = "0.2"
 
+# Web UI / admin console. Axum + tower-http + reqwest mirror mutel's
+# stack so the two services are operationally similar (same OTLP path,
+# same TLS story, same HTTP middleware vocabulary). reqwest is needed
+# for the mutel client; rustls-tls keeps us off the system OpenSSL.
+axum = { version = "0.8", features = ["macros"] }
+tower-http = { version = "0.6", features = ["fs", "compression-gzip"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+# Embed static assets at compile time so the admin pod is self-contained
+# (no ConfigMap, no extra volumes — the binary ships its own UI).
+include_dir = "0.7"
+
 [profile.release]
 lto = "thin"

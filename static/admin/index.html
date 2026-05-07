@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>accelrd — admin</title>
+	<link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+	<nav class="navbar">
+		<div class="nav-brand">
+			<span class="brand-icon">&#9673;</span>
+			<span class="brand-text">accelrd</span>
+			<span class="brand-tag">admin</span>
+		</div>
+		<div class="nav-links">
+			<a href="#" class="nav-link active" data-view="cluster">Cluster</a>
+			<a href="#" class="nav-link" data-view="topology">Topology</a>
+			<a href="#" class="nav-link" data-view="probes">Probes</a>
+			<a href="#" class="nav-link" data-view="logs">Logs</a>
+		</div>
+		<div class="nav-status">
+			<span class="status-pill" id="status-k8s">k8s: ?</span>
+			<span class="status-pill" id="status-mutel">mutel: ?</span>
+		</div>
+	</nav>
+
+	<div id="banner" class="banner hidden"></div>
+
+	<main class="content">
+		<section id="cluster-view" class="view active">
+			<div class="view-header">
+				<h2>Cluster</h2>
+				<div class="view-controls">
+					<button id="cluster-refresh" class="control-btn">Refresh</button>
+				</div>
+			</div>
+			<div class="summary-row" id="cluster-summary"></div>
+			<div class="summary-row" id="fleet-summary"></div>
+			<div class="table-scroll">
+				<table class="data-table" id="nodes-table">
+					<thead>
+						<tr>
+							<th>Node</th>
+							<th>Rack</th>
+							<th>Accelerators</th>
+							<th>Vendors</th>
+							<th>Memory used</th>
+							<th>Power</th>
+							<th>Temp</th>
+							<th>Util</th>
+							<th>Last probe</th>
+							<th>Verdict</th>
+							<th>Status</th>
+						</tr>
+					</thead>
+					<tbody><tr><td colspan="11" class="placeholder">Loading…</td></tr></tbody>
+				</table>
+			</div>
+		</section>
+
+		<section id="topology-view" class="view">
+			<div class="view-header">
+				<h2>Topology</h2>
+				<div class="view-controls">
+					<span class="legend"><span class="legend-dot" style="background:var(--success)"></span>healthy</span>
+					<span class="legend"><span class="legend-dot" style="background:var(--warning)"></span>untested</span>
+					<span class="legend"><span class="legend-dot" style="background:var(--error)"></span>failed</span>
+				</div>
+			</div>
+			<div class="topology-canvas" id="topology-canvas">
+				<p class="placeholder">Loading topology…</p>
+			</div>
+		</section>
+
+		<section id="probes-view" class="view">
+			<div class="view-header">
+				<h2>Probe results</h2>
+				<div class="view-controls">
+					<button id="probes-refresh" class="control-btn">Refresh</button>
+				</div>
+			</div>
+			<div class="table-scroll">
+				<table class="data-table" id="probes-table">
+					<thead>
+						<tr>
+							<th>When</th>
+							<th>Node</th>
+							<th>Partner</th>
+							<th>Rack</th>
+							<th>Bandwidth (Gb/s)</th>
+							<th>Verdict</th>
+						</tr>
+					</thead>
+					<tbody><tr><td colspan="6" class="placeholder">Loading…</td></tr></tbody>
+				</table>
+			</div>
+		</section>
+
+		<section id="logs-view" class="view">
+			<div class="view-header">
+				<h2>Recent logs (mutel)</h2>
+				<div class="view-controls">
+					<input type="text" id="log-service" class="control-input" placeholder="filter (search substring)">
+					<button id="logs-refresh" class="control-btn">Refresh</button>
+				</div>
+			</div>
+			<div class="log-container">
+				<div class="log-entries" id="log-entries"><p class="placeholder">Loading…</p></div>
+			</div>
+		</section>
+	</main>
+
+	<footer class="footer">
+		<span id="footer-version">accelrd-admin</span>
+		<span id="footer-uptime">uptime —</span>
+		<span id="footer-mutel">mutel —</span>
+	</footer>
+
+	<script src="/static/js/topology.js"></script>
+	<script src="/static/js/app.js"></script>
+</body>
+</html>

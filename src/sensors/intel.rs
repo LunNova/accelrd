@@ -79,7 +79,11 @@ fn build_accelerator(drm_index: u32, device_dir: std::path::PathBuf) -> Accelera
 	};
 
 	Accelerator {
-		id: AcceleratorId { vendor: Vendor::Intel, drm_index, pci_addr },
+		id: AcceleratorId {
+			vendor: Vendor::Intel,
+			drm_index,
+			pci_addr,
+		},
 		model: format!("Intel device {device_id:#06x}"),
 		memory_kind,
 		memory_total_bytes,

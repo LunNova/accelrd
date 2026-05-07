@@ -101,7 +101,9 @@ fn build_amd_xgmi_groups(accels: &[Accelerator]) -> Vec<Vec<AcceleratorId>> {
 	for a in &amd {
 		adjacency.entry(&a.id).or_default();
 		for peer_addr in read_xgmi_peers(&a.device_dir) {
-			let Some(peer) = amd.iter().find(|p| p.id.pci_addr == peer_addr) else { continue };
+			let Some(peer) = amd.iter().find(|p| p.id.pci_addr == peer_addr) else {
+				continue;
+			};
 			adjacency.entry(&a.id).or_default().insert(&peer.id);
 			adjacency.entry(&peer.id).or_default().insert(&a.id);
 		}
@@ -143,9 +145,14 @@ fn assign_fabric(accelerators: &mut [Accelerator], members: &[AcceleratorId], id
 /// versions. Try the well-known names; return an empty list if none work.
 fn read_xgmi_peers(device_dir: &Path) -> Vec<String> {
 	for name in ["xgmi_peer_links", "xgmi_phy_id", "xgmi_link_status"] {
-		let Ok(s) = std::fs::read_to_string(device_dir.join(name)) else { continue };
-		let peers: Vec<String> =
-			s.split_ascii_whitespace().filter(|t| t.contains(':')).map(str::to_string).collect();
+		let Ok(s) = std::fs::read_to_string(device_dir.join(name)) else {
+			continue;
+		};
+		let peers: Vec<String> = s
+			.split_ascii_whitespace()
+			.filter(|t| t.contains(':'))
+			.map(str::to_string)
+			.collect();
 		if !peers.is_empty() {
 			return peers;
 		}

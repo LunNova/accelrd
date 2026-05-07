@@ -22,8 +22,11 @@ use crate::topology::labels::LabelSet;
 
 /// Label/annotation key prefixes the daemon owns. Anything *not* under
 /// one of these is left alone during reconcile.
-const MANAGED_PREFIXES: &[&str] =
-	&["accel.lunnova.dev/", "accel-topo.lunnova.dev/", "accel-ready.lunnova.dev/"];
+const MANAGED_PREFIXES: &[&str] = &[
+	"accel.lunnova.dev/",
+	"accel-topo.lunnova.dev/",
+	"accel-ready.lunnova.dev/",
+];
 
 pub struct OptionalLabeler {
 	state: LabelerState,
@@ -59,7 +62,11 @@ impl OptionalLabeler {
 		} else {
 			LabelerState::Disabled
 		};
-		Self { state, node_name, announced: AtomicBool::new(false) }
+		Self {
+			state,
+			node_name,
+			announced: AtomicBool::new(false),
+		}
 	}
 
 	pub async fn reconcile(&self, labels: &LabelSet) {
@@ -100,7 +107,11 @@ impl OptionalLabeler {
 			}
 		};
 
-		let patch_body = build_merge_patch(current.metadata.labels.as_ref(), current.metadata.annotations.as_ref(), labels);
+		let patch_body = build_merge_patch(
+			current.metadata.labels.as_ref(),
+			current.metadata.annotations.as_ref(),
+			labels,
+		);
 		let patch_params = PatchParams::default();
 		let patch = Patch::Merge(&patch_body);
 
@@ -157,7 +168,10 @@ fn build_merge_patch(
 /// Build one section (labels or annotations) of the merge patch: null
 /// out managed-prefix keys we no longer want, then overlay the desired
 /// keys.
-fn merged_section(current: Option<&BTreeMap<String, String>>, desired: &BTreeMap<String, String>) -> Map<String, Value> {
+fn merged_section(
+	current: Option<&BTreeMap<String, String>>,
+	desired: &BTreeMap<String, String>,
+) -> Map<String, Value> {
 	let mut out = Map::new();
 	if let Some(cur) = current {
 		for k in cur.keys() {

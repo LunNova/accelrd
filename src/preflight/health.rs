@@ -66,7 +66,10 @@ impl PreflightCheck for DrmRenderNodePresent {
 		// minor by reading /sys/class/drm/cardN/device/drm/renderD*.
 		let drm_dir = a.device_dir.join("drm");
 		let exists = std::fs::read_dir(&drm_dir)
-			.map(|d| d.flatten().any(|e| e.file_name().to_string_lossy().starts_with("renderD")))
+			.map(|d| {
+				d.flatten()
+					.any(|e| e.file_name().to_string_lossy().starts_with("renderD"))
+			})
 			.unwrap_or(false);
 		if exists {
 			CheckOutcome::pass()
@@ -86,7 +89,9 @@ pub struct TemperatureBelowThrottle {
 
 impl Default for TemperatureBelowThrottle {
 	fn default() -> Self {
-		Self { threshold_celsius: 95.0 }
+		Self {
+			threshold_celsius: 95.0,
+		}
 	}
 }
 
@@ -114,7 +119,10 @@ impl PreflightCheck for TemperatureBelowThrottle {
 		if temp_c >= self.threshold_celsius {
 			CheckOutcome {
 				status: Status::Fail,
-				message: Some(format!("temperature {temp_c:.1} °C ≥ {} °C threshold", self.threshold_celsius)),
+				message: Some(format!(
+					"temperature {temp_c:.1} °C ≥ {} °C threshold",
+					self.threshold_celsius
+				)),
 				measurements,
 			}
 		} else if temp_c >= warn_threshold {
@@ -124,7 +132,11 @@ impl PreflightCheck for TemperatureBelowThrottle {
 				measurements,
 			}
 		} else {
-			CheckOutcome { status: Status::Pass, message: None, measurements }
+			CheckOutcome {
+				status: Status::Pass,
+				message: None,
+				measurements,
+			}
 		}
 	}
 }
@@ -138,7 +150,9 @@ pub struct MemoryFloor {
 
 impl Default for MemoryFloor {
 	fn default() -> Self {
-		Self { min_free_bytes: 1 << 30 } // 1 GiB
+		Self {
+			min_free_bytes: 1 << 30,
+		} // 1 GiB
 	}
 }
 
@@ -181,7 +195,11 @@ impl PreflightCheck for MemoryFloor {
 				measurements,
 			}
 		} else {
-			CheckOutcome { status: Status::Pass, message: None, measurements }
+			CheckOutcome {
+				status: Status::Pass,
+				message: None,
+				measurements,
+			}
 		}
 	}
 }
@@ -208,7 +226,10 @@ impl PreflightCheck for DriverLoaded {
 		if accepts_driver(a.id.vendor, driver_name) {
 			CheckOutcome::pass()
 		} else {
-			CheckOutcome::warn(format!("driver={driver_name}, expected {}", expected_driver(a.id.vendor)))
+			CheckOutcome::warn(format!(
+				"driver={driver_name}, expected {}",
+				expected_driver(a.id.vendor)
+			))
 		}
 	}
 }

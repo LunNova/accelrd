@@ -1,0 +1,96 @@
+# SPDX-FileCopyrightText: 2026 LunNova
+# SPDX-License-Identifier: CC0-1.0
+#
+# accelrd prober Deployment. Singleton controller — keep replicas: 1.
+# (No leader election yet; HA is a future change.)
+#
+# This is a regular workload pod: no hostNetwork, no host filesystem,
+# no privileged caps. It only talks to the apiserver and to the OTLP
+# collector, and it creates probe Pods in its own namespace via the
+# RBAC bound in rbac.yaml.
+#
+# Probe pods (created dynamically by this controller) DO require host
+# /dev/infiniband + IPC_LOCK — see manifests/probe/template.yaml for
+# the shape they take. The image referenced by ACCELRD_PROBER_PROBE_IMAGE
+# must contain `ib_send_bw` (perftest); the same accelrd image bakes it
+# in by default.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: accelrd-prober
+  namespace: accelrd
+  labels:
+    app.kubernetes.io/name: accelrd-prober
+    app.kubernetes.io/component: controller
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: accelrd-prober
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: accelrd-prober
+        app.kubernetes.io/component: controller
+    spec:
+      serviceAccountName: accelrd-prober
+      automountServiceAccountToken: true
+      priorityClassName: system-cluster-critical
+      containers:
+        - name: prober
+          image: ghcr.io/lunnova/accelrd:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - prober
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: CONTAINER_NAME
+              value: prober
+            - name: ACCELRD_PROBER_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # Must match `image:` above. Used by the prober to populate
+            # probe pods' container image. There is no reliable downward-API
+            # path that exposes the running image, so we plumb it explicitly.
+            - name: ACCELRD_PROBER_PROBE_IMAGE
+              value: ghcr.io/lunnova/accelrd:latest
+            - name: ACCELRD_OTLP_ENDPOINT
+              value: "http://otel-collector.observability.svc.cluster.local:4318"
+            - name: RUST_LOG
+              value: "info,opentelemetry=warn,reqwest=error,kube=info"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi

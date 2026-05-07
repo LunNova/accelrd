@@ -1,11 +1,14 @@
 # SPDX-FileCopyrightText: 2026 LunNova
 # SPDX-License-Identifier: CC0-1.0
 #
-# RBAC for accelrd DaemonSet.
-# - ServiceAccount lives in its own namespace.
-# - ClusterRole grants the minimum needed: GET node metadata + PATCH the
-#   node it runs on. We don't list/watch — the daemon only ever touches
-#   its own node, identified via downward API.
+# RBAC for the accelrd workloads. Two ServiceAccounts in this file:
+# - `accelrd` (DaemonSet): GET node metadata + PATCH the node it runs
+#   on. We don't list/watch — the daemon only ever touches its own
+#   node, identified via downward API.
+# - `accelrd-admin` (admin Deployment): LIST/GET/WATCH on Nodes and
+#   Pods, no write verbs. The admin pod is a read-only console; if its
+#   token leaks, all an attacker can do is enumerate cluster state
+#   the operator was already going to expose to humans.
 ---
 apiVersion: v1
 kind: Namespace
@@ -48,4 +51,35 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: accelrd
+    namespace: accelrd
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: accelrd-admin
+  namespace: accelrd
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: accelrd-admin
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: accelrd-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: accelrd-admin
+subjects:
+  - kind: ServiceAccount
+    name: accelrd-admin
     namespace: accelrd

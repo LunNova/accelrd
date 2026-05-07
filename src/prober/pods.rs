@@ -5,12 +5,18 @@
 //! and let kube-rs deserialize → `Pod`; cleaner than instantiating the
 //! deeply-nested k8s_openapi types positionally.
 //!
-//! Probe pods run with hostNetwork (so the server's IP equals the node's
-//! InternalIP, no Service needed), root-in-container (so CAP_NET_RAW +
-//! CAP_IPC_LOCK actually land in the effective set on exec), and a
-//! hostPath mount on `/dev/infiniband` so libibverbs can open the
-//! kernel uverbs files. RDMA hardware access without a device plugin
-//! requires either privileged or these specific capabilities.
+//! Probe pods run on the cluster network (no hostNetwork) — the
+//! QP-exchange TCP travels pod-to-pod via the CNI, but the actual RDMA
+//! data flow goes host-to-host through the kernel's RoCE port (which
+//! /dev/infiniband exposes; that device isn't namespaced). The client
+//! gets the server's pod-network IP after waiting for the server pod's
+//! `status.podIP` to populate.
+//!
+//! Containers run as root (so CAP_NET_RAW + CAP_IPC_LOCK actually land
+//! in the effective set on exec) with a hostPath mount on
+//! `/dev/infiniband`. With a device plugin (`squat.ai/infiniband` etc.)
+//! claimed via extended resources, kubelet programs the device-cgroup
+//! allow rule so libibverbs can open the uverbs files.
 
 use std::time::{Duration, Instant};
 
@@ -96,8 +102,6 @@ pub fn build_pod(s: &PodSpec<'_>) -> anyhow::Result<Pod> {
 		},
 		"spec": {
 			"restartPolicy": "Never",
-			"hostNetwork": true,
-			"dnsPolicy": "ClusterFirstWithHostNet",
 			"nodeName": s.node_name,
 			"automountServiceAccountToken": false,
 			"tolerations": [
@@ -171,6 +175,42 @@ pub enum Phase {
 	Succeeded,
 	Failed,
 	Timeout,
+}
+
+/// Poll a pod until `status.podIP` is populated, or the deadline
+/// expires. Used between server-pod creation and client-pod creation:
+/// without hostNetwork the server's IP is CNI-assigned, not derivable
+/// from the Node, so we have to wait for kubelet to set it.
+pub async fn await_pod_ip(api: &Api<Pod>, name: &str, timeout: Duration) -> anyhow::Result<String> {
+	let deadline = Instant::now() + timeout;
+	let mut interval = tokio::time::interval(Duration::from_millis(500));
+	loop {
+		interval.tick().await;
+		if Instant::now() >= deadline {
+			anyhow::bail!("timeout waiting for pod {name} to receive a pod-network IP");
+		}
+		match api.get(name).await {
+			Ok(p) => {
+				if let Some(ip) = p.status.as_ref().and_then(|s| s.pod_ip.as_deref())
+					&& !ip.is_empty()
+				{
+					return Ok(ip.to_string());
+				}
+				if matches!(
+					p.status.as_ref().and_then(|s| s.phase.as_deref()),
+					Some("Failed") | Some("Succeeded")
+				) {
+					anyhow::bail!("pod {name} terminated before receiving an IP");
+				}
+			}
+			Err(kube::Error::Api(e)) if e.code == 404 => {
+				anyhow::bail!("pod {name} disappeared before receiving an IP");
+			}
+			Err(e) => {
+				tracing::debug!(error = %e, pod = name, "transient pod-get error during IP wait");
+			}
+		}
+	}
 }
 
 pub async fn await_terminal(api: &Api<Pod>, name: &str, timeout: Duration) -> anyhow::Result<Phase> {

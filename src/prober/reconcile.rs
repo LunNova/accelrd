@@ -83,32 +83,11 @@ async fn probe_pair(
 	let _enter = span.enter();
 	tracing::info!("starting paired probe");
 
-	let Some(server_ip) = server.internal_ip.as_deref() else {
-		emit_attempt_metric(&rack, "fail");
-		patch_pair(
-			&nodes_api,
-			&server.name,
-			&client.name,
-			&Verdict::Fail("server node has no InternalIP"),
-		)
-		.await;
-		return;
-	};
-
 	let server_pod_spec = pods::PodSpec {
 		role: pods::Role::Server,
 		node_name: &server.name,
 		partner_node: &client.name,
-		partner_ip: client.internal_ip.as_deref(),
-		rack: &rack,
-		pair_id: &pair_id,
-		args: &args,
-	};
-	let client_pod_spec = pods::PodSpec {
-		role: pods::Role::Client,
-		node_name: &client.name,
-		partner_node: &server.name,
-		partner_ip: Some(server_ip),
+		partner_ip: None,
 		rack: &rack,
 		pair_id: &pair_id,
 		args: &args,
@@ -123,20 +102,6 @@ async fn probe_pair(
 				&server.name,
 				&client.name,
 				&Verdict::Fail(&format!("build server pod: {e}")),
-			)
-			.await;
-			return;
-		}
-	};
-	let client_pod = match pods::build_pod(&client_pod_spec) {
-		Ok(p) => p,
-		Err(e) => {
-			emit_attempt_metric(&rack, "fail");
-			patch_pair(
-				&nodes_api,
-				&server.name,
-				&client.name,
-				&Verdict::Fail(&format!("build client pod: {e}")),
 			)
 			.await;
 			return;
@@ -158,6 +123,51 @@ async fn probe_pair(
 		}
 	};
 	let server_pod_name = server_created.metadata.name.clone().unwrap_or_default();
+
+	// Wait for the CNI to assign the server pod its IP. Without this,
+	// we'd race with kubelet and kick off the client pod pointing at
+	// nothing. 60s is plenty for any sane CNI; image-pull delays are
+	// the dominant cost and they're absorbed here.
+	let server_pod_ip = match pods::await_pod_ip(&pods_api, &server_pod_name, Duration::from_secs(60)).await {
+		Ok(ip) => ip,
+		Err(e) => {
+			pods::delete(&pods_api, &server_pod_name).await;
+			emit_attempt_metric(&rack, "fail");
+			patch_pair(
+				&nodes_api,
+				&server.name,
+				&client.name,
+				&Verdict::Fail(&format!("server pod IP: {e}")),
+			)
+			.await;
+			return;
+		}
+	};
+
+	let client_pod_spec = pods::PodSpec {
+		role: pods::Role::Client,
+		node_name: &client.name,
+		partner_node: &server.name,
+		partner_ip: Some(&server_pod_ip),
+		rack: &rack,
+		pair_id: &pair_id,
+		args: &args,
+	};
+	let client_pod = match pods::build_pod(&client_pod_spec) {
+		Ok(p) => p,
+		Err(e) => {
+			pods::delete(&pods_api, &server_pod_name).await;
+			emit_attempt_metric(&rack, "fail");
+			patch_pair(
+				&nodes_api,
+				&server.name,
+				&client.name,
+				&Verdict::Fail(&format!("build client pod: {e}")),
+			)
+			.await;
+			return;
+		}
+	};
 
 	let client_created = match pods::create(&pods_api, &client_pod).await {
 		Ok(p) => p,

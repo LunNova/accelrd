@@ -42,9 +42,9 @@ impl AcceleratorSensor for NvidiaSysfsSensor {
 
 		if let Some(total) = accel.memory_total_bytes {
 			m.push(common::measurement(
-				"accel.memory.dedicated.total",
+				"accel.memory.total",
 				"By",
-				"Dedicated VRAM total (from PCI BAR1; sysfs-only path).",
+				"Accelerator memory total (from PCI BAR1; sysfs-only path, no live used reading without NVML).",
 				total as f64,
 			));
 		}

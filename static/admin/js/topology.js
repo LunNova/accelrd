@@ -185,11 +185,10 @@
 			x: 12, y: bar_y, width: bar_w, height: 8, rx: 2,
 			fill: "#1a2456", stroke: "#2d1b5e",
 		}));
-		// Pick the "primary" memory bar: VRAM if present, else UMA. RAM
-		// stays out of this view — the topology cards visualize accelerator
-		// memory pressure, not host RAM.
-		const memTotal = (m.vram_total_bytes || 0) + (m.uma_total_bytes || 0);
-		const memUsed = (m.vram_used_bytes || 0) + (m.uma_used_bytes || 0);
+		// Accelerator memory pressure bar. RAM stays out of this view —
+		// the topology cards visualize per-card memory, not host RAM.
+		const memTotal = m.mem_total_bytes || 0;
+		const memUsed = m.mem_used_bytes || 0;
 		if (memTotal > 0) {
 			const frac = Math.max(0, Math.min(1, memUsed / memTotal));
 			g.appendChild(el("rect", {

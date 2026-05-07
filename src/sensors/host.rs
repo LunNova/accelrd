@@ -10,6 +10,10 @@
 //! * `host.memory.swap.total_bytes` / `host.memory.swap.used_bytes`.
 //! * `host.disk.free_bytes` — per real (non-virtual) mount, statvfs.
 //! * `host.disk.total_bytes` — per mount, statvfs.
+//! * `host.power.usage` — instantaneous power draw (W) read from any
+//!   non-GPU hwmon `power*_input` (CPU package via `amd_energy` / Intel
+//!   IPMI / chassis BMCs). GPU power lives on the per-accelerator
+//!   `accel.power.usage` series.
 //!
 //! The probe-readiness preflight checks read these to gate "do we have
 //! enough RAM and disk to start a GPU workload" — image pulls, ephemeral
@@ -18,21 +22,31 @@
 
 use std::collections::BTreeMap;
 use std::ffi::CString;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use super::Measurement;
 
 const MEMINFO: &str = "/proc/meminfo";
 const MOUNTINFO: &str = "/proc/self/mountinfo";
+const HWMON_DIR: &str = "/sys/class/hwmon";
 
 /// Filesystem types we report disk-free for. Anything else (tmpfs,
 /// devtmpfs, proc, sys, cgroup, …) is virtual or in-memory and isn't
 /// the resource a scheduler decision should hinge on.
 const REAL_FILESYSTEMS: &[&str] = &["ext4", "xfs", "btrfs", "zfs", "f2fs", "ext3", "ext2"];
 
+/// Hwmon `name` values that belong to GPUs / storage. We skip these when
+/// scanning for host-level power because their `power*_input` (if any) is
+/// already attributed via `accel.power.usage` or is irrelevant to fleet
+/// power totals.
+const SKIP_HWMON_NAMES: &[&str] = &["amdgpu", "i915", "xe", "nouveau", "nvidia", "nvme", "drivetemp"];
+
 pub fn snapshot() -> Vec<Measurement> {
 	let mut out = Vec::new();
 	out.extend(memory_metrics());
 	out.extend(disk_metrics());
+	out.extend(power_metrics());
 	out
 }
 
@@ -106,6 +120,79 @@ fn disk_metrics() -> Vec<Measurement> {
 		});
 	}
 	out
+}
+
+/// Walk `/sys/class/hwmon/*` and emit `host.power.usage` for any
+/// `power*_input` reading from a non-GPU/non-storage hwmon. The reading
+/// is instantaneous (no time-delta math); on Linux this is microwatts
+/// per the hwmon spec, so we divide by 1e6 for Watts.
+///
+/// The likely sources on a typical box: `amd_energy` (per-CCD/package
+/// for Zen CPUs), Intel chassis power via IPMI (`ipmi_si`), enterprise
+/// BMCs that expose PSU readings. If none of those modules are loaded
+/// this returns nothing — fleet power then equals GPU power as before,
+/// which is the honest answer.
+fn power_metrics() -> Vec<Measurement> {
+	let mut out = Vec::new();
+	let Ok(entries) = fs::read_dir(HWMON_DIR) else {
+		return out;
+	};
+	for entry in entries.flatten() {
+		let dir = entry.path();
+		let Some(name) = read_first_line(&dir.join("name")) else {
+			continue;
+		};
+		if SKIP_HWMON_NAMES.contains(&name.as_str()) {
+			continue;
+		}
+		for power_path in power_input_files(&dir) {
+			let Some(uw) = read_u64(&power_path) else { continue };
+			let watts = uw as f64 / 1_000_000.0;
+			let mut attrs = vec![("source", name.clone())];
+			let label_path = power_path
+				.file_name()
+				.and_then(|n| n.to_str())
+				.map(|n| dir.join(n.replace("_input", "_label")));
+			if let Some(label) = label_path.as_deref().and_then(read_first_line) {
+				attrs.push(("rail", label));
+			}
+			out.push(Measurement {
+				name: "host.power.usage",
+				unit: "W",
+				description: "Instantaneous power draw from a non-GPU hwmon power_input (CPU/chassis/PSU).",
+				value: watts,
+				attrs,
+			});
+		}
+	}
+	out
+}
+
+fn power_input_files(dir: &Path) -> Vec<PathBuf> {
+	let Ok(entries) = fs::read_dir(dir) else {
+		return Vec::new();
+	};
+	let mut paths: Vec<PathBuf> = entries
+		.flatten()
+		.map(|e| e.path())
+		.filter(|p| {
+			p.file_name()
+				.and_then(|n| n.to_str())
+				.is_some_and(|n| n.starts_with("power") && n.ends_with("_input"))
+		})
+		.collect();
+	paths.sort();
+	paths
+}
+
+fn read_first_line(p: &Path) -> Option<String> {
+	let s = fs::read_to_string(p).ok()?;
+	let line = s.lines().next()?.trim().to_string();
+	(!line.is_empty()).then_some(line)
+}
+
+fn read_u64(p: &Path) -> Option<u64> {
+	read_first_line(p)?.parse().ok()
 }
 
 fn parse_meminfo() -> BTreeMap<String, u64> {

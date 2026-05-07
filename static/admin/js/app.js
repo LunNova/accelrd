@@ -192,12 +192,12 @@
 			strip.innerHTML = renderStatusStrip(summary, fleet);
 
 			if (nodes.length === 0) {
-				tbody.innerHTML = `<tr><td colspan="14" class="placeholder">No nodes (k8s disabled or empty cluster)</td></tr>`;
+				tbody.innerHTML = `<tr><td colspan="13" class="placeholder">No nodes (k8s disabled or empty cluster)</td></tr>`;
 			} else {
 				tbody.innerHTML = nodes.map((n) => nodeRow(n, fleet.by_node && fleet.by_node[n.name])).join("");
 			}
 		} catch (e) {
-			tbody.innerHTML = `<tr><td colspan="14" class="placeholder">${escapeHTML(e.message)}</td></tr>`;
+			tbody.innerHTML = `<tr><td colspan="13" class="placeholder">${escapeHTML(e.message)}</td></tr>`;
 		}
 	}
 
@@ -214,7 +214,7 @@
 		}
 		const f = fleet.fleet || {};
 		cells.push(
-			stat("vram", memPair(f.vram_used_bytes, f.vram_total_bytes)),
+			stat("memory", memPair(f.mem_used_bytes, f.mem_total_bytes)),
 			stat("ram avl", fmtBytesShort(f.ram_available_bytes)),
 			stat("disk free", fmtBytesShort(f.disk_free_bytes)),
 			stat("power", fmtPower(f.power_watts || 0)),
@@ -319,8 +319,7 @@
 			<td>${escapeHTML(n.rack || "—")}</td>
 			<td>${fmtNum(n.total_accelerators)}</td>
 			<td class="mono">${escapeHTML(fmtVendors(n.vendor_counts))}</td>
-			<td class="mono">${memCell(m.vram_used_bytes, m.vram_total_bytes)}</td>
-			<td class="mono">${memCell(m.uma_used_bytes, m.uma_total_bytes)}</td>
+			<td class="mono">${memCell(m.mem_used_bytes, m.mem_total_bytes)}</td>
 			<td class="mono">${memCell(m.ram_available_bytes, m.ram_total_bytes, "/")}</td>
 			<td class="mono">${memCell(m.disk_free_bytes, m.disk_total_bytes, "/")}</td>
 			<td class="mono">${fmtPower(m.power_watts)}</td>

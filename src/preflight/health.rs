@@ -10,7 +10,7 @@ use async_trait::async_trait;
 
 use crate::sensors::common;
 use crate::sensors::host;
-use crate::sensors::{Coverage, Measurement, MemoryKind, Vendor};
+use crate::sensors::{Coverage, Measurement, Vendor};
 
 use super::{CheckContext, CheckOutcome, CheckScope, PreflightCheck, Status};
 
@@ -143,8 +143,11 @@ impl PreflightCheck for TemperatureBelowThrottle {
 }
 
 /// At least N bytes of allocatable accelerator memory must be free.
-/// Configurable per-instance; defaults to 1 GiB. For UMA accelerators
-/// we read GTT free; for dedicated, VRAM free.
+/// Configurable per-instance; defaults to 1 GiB. Reads the amdgpu
+/// `mem_info_vram_*` accounting that's always present on AMD cards
+/// (HBM on Instinct, GDDR/HBM on Radeon, the GPU-addressable pool on
+/// APUs); skips other vendors where we can't observe used memory
+/// without a vendor SDK.
 pub struct MemoryFloor {
 	pub min_free_bytes: u64,
 }
@@ -171,16 +174,11 @@ impl PreflightCheck for MemoryFloor {
 		if matches!(a.coverage, Coverage::IdentificationOnly) {
 			return CheckOutcome::skipped_with("identification-only sensor cannot report free memory");
 		}
-		let (total_path, used_path) = match a.memory_kind {
-			MemoryKind::Unified => ("mem_info_gtt_total", "mem_info_gtt_used"),
-			MemoryKind::Dedicated => ("mem_info_vram_total", "mem_info_vram_used"),
-			_ => return CheckOutcome::skipped_with("memory kind doesn't expose sysfs accounting"),
-		};
 		let dir = &a.device_dir;
-		let Some(total) = common::read_u64(&dir.join(total_path)) else {
-			return CheckOutcome::skipped_with(format!("missing {total_path}"));
+		let Some(total) = common::read_u64(&dir.join("mem_info_vram_total")) else {
+			return CheckOutcome::skipped_with("missing mem_info_vram_total");
 		};
-		let used = common::read_u64(&dir.join(used_path)).unwrap_or(0);
+		let used = common::read_u64(&dir.join("mem_info_vram_used")).unwrap_or(0);
 		let free = total.saturating_sub(used);
 		let measurements = vec![Measurement {
 			name: "accel.preflight.memory.free",

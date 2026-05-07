@@ -33,9 +33,9 @@ impl AcceleratorSensor for IntelSysfsSensor {
 
 		if let Some(total) = accel.memory_total_bytes {
 			m.push(common::measurement(
-				"accel.memory.dedicated.total",
+				"accel.memory.total",
 				"By",
-				"Dedicated VRAM total (from PCI BAR2 on Intel discrete).",
+				"Accelerator memory total (from PCI BAR2 on Intel discrete; iGPUs share host RAM and have no card-local total).",
 				total as f64,
 			));
 		}

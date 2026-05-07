@@ -62,6 +62,13 @@ spec:
       # (01:80:c2:00:00:0e) is delivered by the kernel to interfaces in
       # the host network namespace, not pod-internal namespaces.
       hostNetwork: true
+      # Default dnsPolicy (ClusterFirst) is silently ignored under
+      # hostNetwork; the pod would inherit the node's /etc/resolv.conf
+      # and lose cluster DNS — meaning ACCELRD_OTLP_ENDPOINT pointing
+      # at otel-collector.observability.svc.cluster.local would fail to
+      # resolve. ClusterFirstWithHostNet is the canonical pairing for
+      # host-networked pods that still need to talk to cluster services.
+      dnsPolicy: ClusterFirstWithHostNet
       automountServiceAccountToken: true
       containers:
         - name: accelrd
@@ -108,11 +115,20 @@ spec:
             #     fieldRef:
             #       fieldPath: metadata.labels['topology.example.com/block']
           securityContext:
+            # Run as root *inside the container* so the requested
+            # CAP_NET_RAW lands in the effective set on exec. With
+            # runAsNonRoot, the kernel zeroes effective/permitted caps
+            # for non-root uids on execve unless ambient caps or file
+            # capabilities are set; capabilities.add only populates the
+            # bounding set, not effective. allowPrivilegeEscalation:false
+            # additionally sets no_new_privs which would block the
+            # file-cap recovery path. The container is still strongly
+            # confined: drop:ALL gives it only NET_RAW, the root FS is
+            # read-only, RuntimeDefault seccomp is on, and there's no
+            # hostPID. This is "root in a netns with one capability,"
+            # not "root on the host."
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            runAsUser: 65532
-            runAsGroup: 65532
             capabilities:
               drop: ["ALL"]
               # CAP_NET_RAW is required to open the AF_PACKET socket

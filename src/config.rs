@@ -1,0 +1,47 @@
+// SPDX-FileCopyrightText: 2026 LunNova
+// SPDX-License-Identifier: CC0-1.0
+
+use clap::Parser;
+
+#[derive(Parser, Debug, Clone)]
+#[command(
+	name = "accel-readiness",
+	about = "Vendor-neutral accelerator readiness daemon (sysfs-only sensors, OTLP telemetry, K8s labels)"
+)]
+pub struct Args {
+	/// OTLP/HTTP base endpoint. Per-signal paths /v1/{traces,metrics,logs} are appended.
+	#[arg(long, default_value = "http://127.0.0.1:4318", env = "ACCEL_READINESS_OTLP_ENDPOINT")]
+	pub otlp_endpoint: String,
+
+	/// Live telemetry emit interval, seconds.
+	#[arg(long, default_value_t = 5, env = "ACCEL_READINESS_LIVE_INTERVAL_SECS")]
+	pub live_interval_secs: u64,
+
+	/// Preflight cycle interval, seconds.
+	#[arg(long, default_value_t = 30, env = "ACCEL_READINESS_PREFLIGHT_INTERVAL_SECS")]
+	pub preflight_interval_secs: u64,
+
+	/// Datacenter row / PDU domain. Opaque ID, used to label the node.
+	#[arg(long, env = "ACCEL_READINESS_BLOCK")]
+	pub block: Option<String>,
+
+	/// Leaf-switch (TOR) rack ID. Opaque, must match across nodes on the same TOR.
+	#[arg(long, env = "ACCEL_READINESS_RACK")]
+	pub rack: Option<String>,
+
+	/// Override OTel `service.name` resource attribute.
+	#[arg(long, default_value = "accel-readiness", env = "OTEL_SERVICE_NAME")]
+	pub service_name: String,
+
+	/// Override the auto-detected node name (defaults to `gethostname` / NODE_NAME env).
+	#[arg(long, env = "NODE_NAME")]
+	pub node_name: Option<String>,
+
+	/// Run one preflight cycle and one live snapshot, then exit. Used in tests.
+	#[arg(long)]
+	pub once: bool,
+
+	/// Skip the K8s labeler entirely even if a service-account token is present.
+	#[arg(long)]
+	pub no_k8s: bool,
+}

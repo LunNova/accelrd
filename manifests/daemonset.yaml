@@ -1,0 +1,119 @@
+# SPDX-FileCopyrightText: 2026 LunNova
+# SPDX-License-Identifier: CC0-1.0
+#
+# accel-readiness DaemonSet. Runs one pod per accelerator-bearing node
+# (selected via nodeSelector or tolerations — adjust below to match your
+# cluster's accelerator-node labels).
+#
+# Reads /sys and /proc read-only. Patches its own node's labels via the
+# accel-readiness ServiceAccount (see rbac.yaml).
+#
+# Set ACCEL_READINESS_OTLP_ENDPOINT to your collector's address. Set
+# ACCEL_READINESS_RACK / ACCEL_READINESS_BLOCK from a node's existing
+# labels via env-from-fieldRef if you have inventory automation, or
+# bake them into per-node ConfigMaps.
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: accel-readiness
+  namespace: accel-readiness
+  labels:
+    app.kubernetes.io/name: accel-readiness
+    app.kubernetes.io/component: agent
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: accel-readiness
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: accel-readiness
+        app.kubernetes.io/component: agent
+    spec:
+      serviceAccountName: accel-readiness
+      # Run only on nodes that have accelerators. Replace with whatever
+      # label your cluster uses (NFD's `feature.node.kubernetes.io/pci-...`,
+      # cloud provider label, etc.). Two common choices:
+      # nodeSelector:
+      #   nvidia.com/gpu.present: "true"
+      # nodeSelector:
+      #   amd.com/gpu: "true"
+      nodeSelector: {}
+      # Tolerate the standard "this node has GPUs" taints so the daemon
+      # actually lands on accelerator nodes.
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        - key: amd.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        - key: accelerator
+          operator: Exists
+          effect: NoSchedule
+      priorityClassName: system-node-critical
+      hostPID: false
+      hostNetwork: false
+      automountServiceAccountToken: true
+      containers:
+        - name: accel-readiness
+          image: ghcr.io/lunnova/accel-readiness:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - --otlp-endpoint=$(ACCEL_READINESS_OTLP_ENDPOINT)
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: ACCEL_READINESS_OTLP_ENDPOINT
+              value: "http://otel-collector.observability.svc.cluster.local:4318"
+            - name: RUST_LOG
+              value: "info,opentelemetry=warn,reqwest=error"
+            # Point at your inventory automation here:
+            # - name: ACCEL_READINESS_RACK
+            #   valueFrom:
+            #     fieldRef:
+            #       fieldPath: metadata.labels['topology.example.com/rack']
+            # - name: ACCEL_READINESS_BLOCK
+            #   valueFrom:
+            #     fieldRef:
+            #       fieldPath: metadata.labels['topology.example.com/block']
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: sys
+              mountPath: /sys
+              readOnly: true
+            - name: proc
+              mountPath: /proc
+              readOnly: true
+      volumes:
+        - name: sys
+          hostPath:
+            path: /sys
+            type: Directory
+        - name: proc
+          hostPath:
+            path: /proc
+            type: Directory

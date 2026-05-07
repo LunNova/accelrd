@@ -1,0 +1,38 @@
+[package]
+name = "accel-readiness"
+version = "0.1.0"
+edition = "2024"
+description = "Vendor-neutral accelerator readiness daemon — sysfs-only sensors, OTLP telemetry, K8s topology labels"
+license = "CC0-1.0"
+authors = ["LunNova"]
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+anyhow = "1"
+thiserror = "2"
+clap = { version = "4", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+opentelemetry = "0.31"
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.31", features = [
+	"trace",
+	"metrics",
+	"logs",
+	"http-proto",
+	"reqwest-blocking-client",
+] }
+opentelemetry-appender-tracing = "0.31"
+
+# K8s client. Default features include client + rustls-tls + ring; that's
+# what we need for in-cluster service-account auth. Auto-disabled at
+# runtime when /var/run/secrets/kubernetes.io is missing.
+kube = "3"
+k8s-openapi = { version = "0.27", features = ["v1_31"] }
+
+[profile.release]
+lto = "thin"

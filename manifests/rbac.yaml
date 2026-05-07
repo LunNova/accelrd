@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: 2026 LunNova
+# SPDX-License-Identifier: CC0-1.0
+#
+# RBAC for accel-readiness DaemonSet.
+# - ServiceAccount lives in its own namespace.
+# - ClusterRole grants the minimum needed: GET node metadata + PATCH the
+#   node it runs on. We don't list/watch — the daemon only ever touches
+#   its own node, identified via downward API.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: accel-readiness
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: accel-readiness
+  namespace: accel-readiness
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: accel-readiness
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: accel-readiness
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: accel-readiness
+subjects:
+  - kind: ServiceAccount
+    name: accel-readiness
+    namespace: accel-readiness

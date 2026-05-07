@@ -152,10 +152,13 @@ pub fn build_pod(s: &PodSpec<'_>) -> anyhow::Result<Pod> {
 /// less explicit for anyone reading the rendered Pod spec.
 fn resources(args: &Resolved) -> Value {
 	let mut requests = serde_json::Map::new();
-	requests.insert("cpu".into(), json!("100m"));
-	requests.insert("memory".into(), json!("64Mi"));
+	requests.insert("cpu".into(), json!("200m"));
+	requests.insert("memory".into(), json!("128Mi"));
 	let mut limits = serde_json::Map::new();
-	limits.insert("cpu".into(), json!("500m"));
+	// A whole core. ib_send_bw is single-threaded but its tight polling
+	// loop pegs the core it's on; capping below 1.0 made the bandwidth
+	// numbers throttle-skewed on busy nodes.
+	limits.insert("cpu".into(), json!("1"));
 	limits.insert("memory".into(), json!("256Mi"));
 	for (k, v) in &args.probe_resources {
 		requests.insert(k.clone(), json!(v));

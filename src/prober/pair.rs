@@ -29,7 +29,6 @@ const NODE_READY_STATUS: &str = "True";
 #[derive(Debug, Clone)]
 pub struct NodeView {
 	pub name: String,
-	pub internal_ip: Option<String>,
 	pub last_at: Option<String>,
 	pub rack: String,
 }
@@ -92,24 +91,13 @@ impl NodeView {
 		if labels.get(RDMA_LABEL).map(String::as_str) != Some(RDMA_PRESENT) {
 			return None;
 		}
-		let internal_ip = n
-			.status
-			.as_ref()
-			.and_then(|s| s.addresses.as_ref())
-			.and_then(|addrs| addrs.iter().find(|a| a.type_ == "InternalIP"))
-			.map(|a| a.address.clone());
 		let last_at = n
 			.metadata
 			.annotations
 			.as_ref()
 			.and_then(|a| a.get(ANN_LAST_AT))
 			.cloned();
-		Some(Self {
-			name,
-			internal_ip,
-			last_at,
-			rack,
-		})
+		Some(Self { name, last_at, rack })
 	}
 }
 
@@ -132,7 +120,6 @@ mod tests {
 	fn nv(name: &str, last: Option<&str>) -> NodeView {
 		NodeView {
 			name: name.into(),
-			internal_ip: Some("10.0.0.1".into()),
 			last_at: last.map(str::to_string),
 			rack: "r1".into(),
 		}

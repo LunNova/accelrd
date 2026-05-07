@@ -95,12 +95,18 @@
 		return `${Math.floor(delta / 86400)}d ago`;
 	}
 
-	function verdictPill(v) {
+	function verdictPill(v, source) {
 		if (!v) return `<span class="pill">untested</span>`;
 		const cls = (v === "pass" || v === "ok") ? "ok"
 			: (v === "fail" || v === "error") ? "err"
 			: "warn";
-		return `<span class="pill ${cls}">${escapeHTML(v)}</span>`;
+		// Annotate the verdict with its source tier inline so it's
+		// clear what "ok" means: a real RoCE bandwidth probe (pair), a
+		// single-node loopback ibverbs self-test, or just the preflight
+		// rollup saying the static preconditions held. Plain text inside
+		// the pill — no nested boxes.
+		const tag = source && source !== "pair" ? ` · ${escapeHTML(source)}` : "";
+		return `<span class="pill ${cls}">${escapeHTML(v)}${tag}</span>`;
 	}
 
 	function escapeHTML(s) {
@@ -262,7 +268,7 @@
 			<td class="mono ${tempClass}">${m.temp_c == null ? "—" : `${m.temp_c.toFixed(0)}°C`}</td>
 			<td class="mono">${fmtPercent(m.utilization)}</td>
 			<td>${escapeHTML(fmtRelative(probe.at))}</td>
-			<td>${verdictPill(probe.verdict)}</td>
+			<td>${verdictPill(probe.verdict, probe.source)}</td>
 			<td>${status}${sched}</td>
 		</tr>`;
 	}
@@ -289,7 +295,7 @@
 				<td class="mono">${escapeHTML(p.partner || "—")}</td>
 				<td>${escapeHTML(p.rack || "—")}</td>
 				<td class="mono">${p.bandwidth_gbps == null ? "—" : p.bandwidth_gbps.toFixed(2)}</td>
-				<td>${verdictPill(p.verdict)}</td>
+				<td>${verdictPill(p.verdict, p.source)}</td>
 			</tr>`).join("");
 		} catch (e) {
 			tbody.innerHTML = `<tr><td colspan="6" class="placeholder">${escapeHTML(e.message)}</td></tr>`;

@@ -71,7 +71,6 @@ a:hover { text-decoration: underline; }
 	font-size: 0.75rem;
 	color: var(--text-muted);
 	border: 1px solid var(--border-subtle);
-	border-radius: 3px;
 	padding: 1px 6px;
 	margin-left: 0.25rem;
 }
@@ -98,7 +97,6 @@ a:hover { text-decoration: underline; }
 	font-family: var(--font-mono);
 	font-size: 0.78rem;
 	padding: 2px 8px;
-	border-radius: 999px;
 	background: var(--bg-tertiary);
 	color: var(--text-secondary);
 	border: 1px solid var(--border-subtle);
@@ -151,80 +149,97 @@ a:hover { text-decoration: underline; }
 .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 
 .control-select, .control-input, .control-btn {
-	padding: 0.375rem 0.75rem;
-	font-size: 0.85rem;
+	padding: 0.3rem 0.7rem;
+	font-size: 0.82rem;
 	border: 1px solid var(--border-color);
-	border-radius: 4px;
 	background: var(--bg-tertiary);
 	color: var(--text-primary);
-	font-family: var(--font-sans);
+	font-family: var(--font-mono);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
 }
-.control-input { width: 240px; }
+.control-input { width: 240px; text-transform: none; letter-spacing: 0; }
 .control-btn { cursor: pointer; transition: background 0.15s, color 0.15s; }
 .control-btn:hover { background: var(--border-subtle); color: var(--accent-hover); }
 
-/* Summary cards */
+/* Summary cards — terminal-dense, sharp corners, mono throughout. */
 .summary-row {
 	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-	gap: 0.75rem;
-	padding: 1rem;
-	border-bottom: 1px solid var(--border-subtle);
+	grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+	gap: 0;
+	padding: 0;
+	border-bottom: 1px solid var(--border-color);
+	background: var(--bg-primary);
 }
 .summary-card {
 	background: var(--bg-secondary);
-	border: 1px solid var(--border-subtle);
-	border-radius: 4px;
-	padding: 0.75rem 1rem;
+	border-right: 1px solid var(--border-subtle);
+	padding: 0.4rem 0.75rem 0.5rem;
+	min-width: 0;
 }
+.summary-card:last-child { border-right: none; }
 .summary-card .label {
 	font-family: var(--font-mono);
-	font-size: 0.72rem;
-	letter-spacing: 0.06em;
+	font-size: 0.68rem;
+	letter-spacing: 0.08em;
 	text-transform: uppercase;
 	color: var(--text-muted);
 }
 .summary-card .value {
 	font-family: var(--font-mono);
-	font-size: 1.4rem;
+	font-size: 1.15rem;
+	font-weight: 600;
 	color: var(--accent-hover);
-	margin-top: 0.2rem;
+	margin-top: 0.05rem;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 .summary-card .sub {
-	font-size: 0.78rem;
+	font-family: var(--font-mono);
+	font-size: 0.72rem;
 	color: var(--text-secondary);
-	margin-top: 0.1rem;
+	margin-top: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
-/* Tables */
+/* Tables — Bloomberg-dense: sharp dividers, tight rows, mono everywhere. */
 .table-scroll { overflow: auto; flex: 1; }
 .data-table {
 	width: 100%;
 	border-collapse: collapse;
-	font-size: 0.88rem;
+	font-family: var(--font-mono);
+	font-size: 0.8rem;
 }
 .data-table thead th {
 	position: sticky;
 	top: 0;
 	background: var(--bg-secondary);
 	color: var(--text-secondary);
-	font-weight: 600;
+	font-weight: 700;
 	text-align: left;
-	padding: 0.5rem 0.75rem;
+	padding: 0.3rem 0.6rem;
 	border-bottom: 1px solid var(--border-color);
+	border-right: 1px solid var(--border-subtle);
 	font-family: var(--font-mono);
-	font-size: 0.78rem;
+	font-size: 0.7rem;
 	text-transform: uppercase;
-	letter-spacing: 0.04em;
+	letter-spacing: 0.06em;
+	white-space: nowrap;
 }
+.data-table thead th:last-child { border-right: none; }
 .data-table tbody td {
-	padding: 0.45rem 0.75rem;
+	padding: 0.25rem 0.6rem;
 	border-bottom: 1px solid var(--border-subtle);
-	vertical-align: top;
+	vertical-align: middle;
+	white-space: nowrap;
 }
-.data-table tbody tr:hover { background: rgba(94, 70, 193, 0.08); }
-.data-table .mono { font-family: var(--font-mono); font-size: 0.82rem; }
-.data-table .placeholder { text-align: center; color: var(--text-muted); padding: 1rem; }
+.data-table tbody tr:nth-child(even) { background: rgba(15, 27, 76, 0.35); }
+.data-table tbody tr:hover { background: rgba(94, 70, 193, 0.18); }
+.data-table .mono { font-family: var(--font-mono); font-size: 0.8rem; }
+.data-table .placeholder { text-align: center; color: var(--text-muted); padding: 1rem; white-space: normal; }
 
 .verdict-pass, .verdict-ok { color: var(--success); }
 .verdict-fail, .verdict-error { color: var(--error); }
@@ -233,10 +248,12 @@ a:hover { text-decoration: underline; }
 
 .pill {
 	display: inline-block;
-	padding: 1px 8px;
-	border-radius: 999px;
+	padding: 0 6px;
 	font-family: var(--font-mono);
-	font-size: 0.75rem;
+	font-size: 0.72rem;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
 	border: 1px solid var(--border-subtle);
 	background: var(--bg-tertiary);
 	color: var(--text-secondary);
@@ -244,6 +261,30 @@ a:hover { text-decoration: underline; }
 .pill.ok { color: var(--success); border-color: var(--success); }
 .pill.err { color: var(--error); border-color: var(--error); }
 .pill.warn { color: var(--warning); border-color: var(--warning); }
+
+/* Scavenge-parts action: shown next to a failed verdict. Half-serious
+   easter egg — links to an eBay search seeded from the node's GPU/NIC
+   labels. Styled like a terminal command, not a CTA. */
+.scavenge-btn {
+	display: inline-block;
+	margin-left: 6px;
+	padding: 0 6px;
+	font-family: var(--font-mono);
+	font-size: 0.7rem;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	border: 1px solid var(--warning);
+	background: transparent;
+	color: var(--warning);
+	cursor: pointer;
+	transition: background 0.15s, color 0.15s;
+}
+.scavenge-btn:hover {
+	background: var(--warning);
+	color: var(--bg-primary);
+	text-decoration: none;
+}
 
 /* Topology canvas */
 .topology-canvas {
@@ -296,5 +337,5 @@ a:hover { text-decoration: underline; }
 /* Scrollbars (webkit only — graceful no-op elsewhere). */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: var(--bg-primary); }
-::-webkit-scrollbar-thumb { background: var(--border-subtle); border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: var(--border-subtle); }
 ::-webkit-scrollbar-thumb:hover { background: var(--accent-purple); }

@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use tower_http::compression::CompressionLayer;
 
 use super::assets;
-use super::k8s::{self as admin_k8s, ClusterSummary, NodeView};
+use super::k8s::{self as admin_k8s, ClusterSummary, NodeView, VerdictSource};
 use super::mutel::{MetricQueryParams, NodeRollup};
 use super::state::AppState;
 
@@ -134,6 +134,7 @@ struct ProbeRow {
 	bandwidth_gbps: Option<f64>,
 	partner: Option<String>,
 	verdict: Option<String>,
+	source: VerdictSource,
 }
 
 async fn probes(State(state): State<AppState>) -> Result<Json<ProbesResponse>, ApiError> {
@@ -149,6 +150,7 @@ async fn probes(State(state): State<AppState>) -> Result<Json<ProbesResponse>, A
 				bandwidth_gbps: p.bandwidth_gbps,
 				partner: p.partner,
 				verdict: p.verdict,
+				source: p.source,
 			})
 		})
 		.collect();

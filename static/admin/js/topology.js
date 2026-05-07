@@ -21,6 +21,13 @@
 		error: "#ec5f67",
 	};
 
+	// Visual treatment for nodes without RDMA. They live in a rack only
+	// for management Ethernet / power-PDU reasons; nothing gets sent
+	// across the RoCE fabric to them. Dim border + neutral stripe to set
+	// them apart from RDMA peers without implying degradation.
+	const NO_RDMA_BORDER = "#3a3f5e";
+	const NO_RDMA_STRIPE = "#5e6480";
+
 	function el(tag, attrs, children) {
 		const e = document.createElementNS(NS, tag);
 		if (attrs) for (const k of Object.keys(attrs)) e.setAttribute(k, attrs[k]);
@@ -31,9 +38,36 @@
 	}
 
 	function nodeColor(node) {
+		// Non-RDMA nodes never participate in pair/loopback probes, so
+		// their "verdict" is the preflight rollup. Dim them visually so
+		// the RDMA peers are easier to scan.
+		if (!node.rdma_capable) {
+			const v = node.last_probe && node.last_probe.verdict;
+			if (v === "ok" || v === "pass") return "#7a8db4";
+			if (v === "fail" || v === "error") return "#ec5f67";
+			return NO_RDMA_BORDER;
+		}
 		const v = node.last_probe && node.last_probe.verdict;
 		if (v && VERDICT_COLOR[v]) return VERDICT_COLOR[v];
 		return "#fac863"; // untested
+	}
+
+	function stripeColor(node) {
+		if (!node.rdma_capable) return NO_RDMA_STRIPE;
+		return nodeColor(node);
+	}
+
+	function verdictLabel(node) {
+		const p = node.last_probe;
+		if (!p) return "untested";
+		const v = p.verdict || "untested";
+		// Annotate the source so it's clear what "ok" means: was it a
+		// real RoCE bandwidth probe, a loopback self-test, or just the
+		// preflight rollup saying "we checked the static preconditions"?
+		const src = p.source;
+		if (src === "preflight") return `${v} · preflight`;
+		if (src === "loopback") return `${v} · loopback`;
+		return v;
 	}
 
 	function chip(x, y, label, count) {
@@ -68,32 +102,52 @@
 
 	function renderNode(node, live, x, y) {
 		const g = el("g", { transform: `translate(${x},${y})` });
-		const verdictColor = nodeColor(node);
+		const borderColor = nodeColor(node);
+		const stripeFill = stripeColor(node);
+		const dimmed = !node.rdma_capable;
 		const m = live || {};
 
 		g.appendChild(el("rect", {
 			width: COL_W, height: NODE_H, rx: 4,
-			fill: "#0f1b4c", stroke: verdictColor, "stroke-width": 1.5,
+			fill: dimmed ? "#0c1438" : "#0f1b4c",
+			stroke: borderColor,
+			"stroke-width": 1.5,
+			"stroke-dasharray": dimmed ? "4 3" : "",
 		}));
 		// Status stripe on left edge.
 		g.appendChild(el("rect", {
 			width: 4, height: NODE_H, rx: 2,
-			fill: verdictColor,
+			fill: stripeFill,
 		}));
 
 		g.appendChild(el("text", {
 			x: 12, y: 18,
 			"font-family": "SF Mono, Cascadia Code, monospace",
-			"font-size": 12, "font-weight": 700, fill: "#c0c5ce",
+			"font-size": 12, "font-weight": 700,
+			fill: dimmed ? "#8d93a8" : "#c0c5ce",
 		}, [node.name]));
 
+		// "no-rdma" badge — small, top-right, only for non-RDMA nodes.
+		if (dimmed) {
+			const badge = el("g", { transform: `translate(${COL_W - 64}, 6)` });
+			badge.appendChild(el("rect", {
+				width: 56, height: 14, rx: 7,
+				fill: "#1a2456", stroke: NO_RDMA_STRIPE,
+			}));
+			badge.appendChild(el("text", {
+				x: 28, y: 10, "text-anchor": "middle",
+				"font-family": "SF Mono, Cascadia Code, monospace",
+				"font-size": 9, fill: "#a7adba",
+			}, ["no-rdma"]));
+			g.appendChild(badge);
+		}
+
 		const total = node.total_accelerators || 0;
-		const verdict = (node.last_probe && node.last_probe.verdict) || "untested";
 		g.appendChild(el("text", {
 			x: 12, y: 34,
 			"font-family": "SF Pro Text, sans-serif",
 			"font-size": 11, fill: "#a7adba",
-		}, [`${total} accel · ${node.fabric_domains} fab · ${verdict}`]));
+		}, [`${total} accel · ${node.fabric_domains} fab · ${verdictLabel(node)}`]));
 
 		// Vendor chips.
 		const vendors = Object.keys(node.vendor_counts || {}).sort();

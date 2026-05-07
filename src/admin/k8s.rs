@@ -15,6 +15,8 @@ use serde::Serialize;
 const TOPO_PREFIX: &str = "accel-topo.lunnova.dev/";
 const ACCEL_PREFIX: &str = "accel.lunnova.dev/";
 const TEST_PREFIX: &str = "accel-test.lunnova.dev/";
+const NET_PREFIX: &str = "accel-net.lunnova.dev/";
+const READY_PREFIX: &str = "accel-ready.lunnova.dev/";
 
 #[derive(Debug, Serialize)]
 pub struct NodeView {
@@ -25,6 +27,11 @@ pub struct NodeView {
 	pub model_counts: BTreeMap<String, u64>,
 	pub total_accelerators: Option<u64>,
 	pub fabric_domains: u64,
+	/// Whether the node has at least one ACTIVE Ethernet-link-layer
+	/// RDMA port (set by the daemon's `accel-net.lunnova.dev/rdma=present`
+	/// label). Drives both the prober's pair-eligibility and the
+	/// topology UI's "no-rdma" visual distinction.
+	pub rdma_capable: bool,
 	pub last_probe: Option<ProbeRecord>,
 	pub conditions: Vec<NodeCondition>,
 	pub ready: bool,
@@ -33,12 +40,33 @@ pub struct NodeView {
 	pub topo_labels: BTreeMap<String, String>,
 }
 
+/// Strongest-available verdict for a node. The cluster's "tested" status
+/// has three possible sources, in descending strength of signal:
+///   1. `pair`      — accel-test.lunnova.dev/last-rack-* annotations
+///                    (cross-node RoCE bandwidth probe)
+///   2. `loopback`  — accel-test.lunnova.dev/last-loopback-* annotations
+///                    (single-node ib_send_bw self-test for nodes that
+///                     have RDMA but no eligible same-rack peer)
+///   3. `preflight` — accel-ready.lunnova.dev/inference label
+///                    (rolling preflight readiness for nodes with no
+///                     RDMA at all but functional GPUs)
+/// Each tier covers a different node population; readers should treat
+/// the `source` field as authoritative for what the verdict measures.
 #[derive(Debug, Serialize)]
 pub struct ProbeRecord {
 	pub at: Option<String>,
 	pub bandwidth_gbps: Option<f64>,
 	pub partner: Option<String>,
 	pub verdict: Option<String>,
+	pub source: VerdictSource,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VerdictSource {
+	Pair,
+	Loopback,
+	Preflight,
 }
 
 impl ProbeRecord {
@@ -123,15 +151,8 @@ impl NodeView {
 		let vendor_counts = parse_count_labels(&labels, "accel.lunnova.dev/vendor.", ".count");
 		let model_counts = parse_count_labels(&labels, "accel.lunnova.dev/model.", ".count");
 
-		let probe = ProbeRecord {
-			at: annotations.get("accel-test.lunnova.dev/last-rack-at").cloned(),
-			bandwidth_gbps: annotations
-				.get("accel-test.lunnova.dev/last-rack-bandwidth-gbps")
-				.and_then(|v| v.parse().ok()),
-			partner: annotations.get("accel-test.lunnova.dev/last-rack-partner").cloned(),
-			verdict: annotations.get("accel-test.lunnova.dev/last-rack-verdict").cloned(),
-		};
-		let last_probe = if probe.is_empty() { None } else { Some(probe) };
+		let rdma_capable = labels.get("accel-net.lunnova.dev/rdma").map(String::as_str) == Some("present");
+		let last_probe = resolve_verdict(&annotations, &labels);
 
 		let mut conditions: Vec<NodeCondition> = Vec::new();
 		let mut ready = false;
@@ -162,7 +183,13 @@ impl NodeView {
 		// "details" view without dumping every kubelet system label.
 		let topo_labels: BTreeMap<String, String> = labels
 			.into_iter()
-			.filter(|(k, _)| k.starts_with(TOPO_PREFIX) || k.starts_with(ACCEL_PREFIX) || k.starts_with(TEST_PREFIX))
+			.filter(|(k, _)| {
+				k.starts_with(TOPO_PREFIX)
+					|| k.starts_with(ACCEL_PREFIX)
+					|| k.starts_with(TEST_PREFIX)
+					|| k.starts_with(NET_PREFIX)
+					|| k.starts_with(READY_PREFIX)
+			})
 			.collect();
 
 		Self {
@@ -173,6 +200,7 @@ impl NodeView {
 			model_counts,
 			total_accelerators,
 			fabric_domains,
+			rdma_capable,
 			last_probe,
 			conditions,
 			ready,
@@ -181,6 +209,67 @@ impl NodeView {
 			topo_labels,
 		}
 	}
+}
+
+/// Three-tier verdict resolution. Returns the strongest-signal record
+/// available — `pair` if the prober has run a cross-node test, otherwise
+/// `loopback` for single-node verbs self-test, otherwise `preflight` from
+/// the daemon's readiness rollup label.
+fn resolve_verdict(annotations: &BTreeMap<String, String>, labels: &BTreeMap<String, String>) -> Option<ProbeRecord> {
+	if let Some(rec) = read_pair(annotations) {
+		return Some(rec);
+	}
+	if let Some(rec) = read_loopback(annotations) {
+		return Some(rec);
+	}
+	read_preflight(labels, annotations)
+}
+
+fn read_pair(annotations: &BTreeMap<String, String>) -> Option<ProbeRecord> {
+	let r = ProbeRecord {
+		at: annotations.get("accel-test.lunnova.dev/last-rack-at").cloned(),
+		bandwidth_gbps: annotations
+			.get("accel-test.lunnova.dev/last-rack-bw-gbps")
+			.and_then(|v| v.parse().ok()),
+		partner: annotations.get("accel-test.lunnova.dev/last-rack-partner").cloned(),
+		verdict: annotations.get("accel-test.lunnova.dev/last-rack-verdict").cloned(),
+		source: VerdictSource::Pair,
+	};
+	if r.is_empty() { None } else { Some(r) }
+}
+
+fn read_loopback(annotations: &BTreeMap<String, String>) -> Option<ProbeRecord> {
+	let r = ProbeRecord {
+		at: annotations.get("accel-test.lunnova.dev/last-loopback-at").cloned(),
+		bandwidth_gbps: annotations
+			.get("accel-test.lunnova.dev/last-loopback-bw-gbps")
+			.and_then(|v| v.parse().ok()),
+		// Loopback has no partner — it's the same node.
+		partner: None,
+		verdict: annotations.get("accel-test.lunnova.dev/last-loopback-verdict").cloned(),
+		source: VerdictSource::Loopback,
+	};
+	if r.is_empty() { None } else { Some(r) }
+}
+
+/// Preflight rollup from the daemon's `accel-ready.lunnova.dev/inference`
+/// label. Doesn't carry bandwidth (no test was run); the verdict here is
+/// "we checked the static + sysfs preconditions and they passed", which
+/// is the right signal for non-RDMA GPU nodes.
+fn read_preflight(labels: &BTreeMap<String, String>, annotations: &BTreeMap<String, String>) -> Option<ProbeRecord> {
+	let inference = labels.get("accel-ready.lunnova.dev/inference")?;
+	let verdict = match inference.as_str() {
+		"true" => Some("ok".to_string()),
+		"false" => Some("fail".to_string()),
+		other => Some(other.to_string()),
+	};
+	Some(ProbeRecord {
+		at: annotations.get("accel-ready.lunnova.dev/last-check").cloned(),
+		bandwidth_gbps: None,
+		partner: None,
+		verdict,
+		source: VerdictSource::Preflight,
+	})
 }
 
 /// Parse `<prefix>{key}<suffix>` labels into a `{key: count}` map.

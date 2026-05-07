@@ -35,5 +35,9 @@ tracing-opentelemetry = "0.32"
 kube = "3"
 k8s-openapi = { version = "0.27", features = ["v1_31"] }
 
+# Raw AF_PACKET socket for LLDP capture. libc is already pulled in
+# transitively by tokio; this just makes the dep explicit.
+libc = "0.2"
+
 [profile.release]
 lto = "thin"

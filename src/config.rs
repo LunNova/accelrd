@@ -44,4 +44,15 @@ pub struct Args {
 	/// Skip the K8s labeler entirely even if a service-account token is present.
 	#[arg(long)]
 	pub no_k8s: bool,
+
+	/// Disable LLDP-based rack discovery. Useful when the daemon lacks
+	/// CAP_NET_RAW and you'd rather skip the wait than log noise.
+	#[arg(long)]
+	pub no_lldp: bool,
+
+	/// LLDP capture timeout in seconds. Default switches advertise every 30s,
+	/// so 60 catches at least one frame; bump higher in lossy networks. Set
+	/// to 0 to skip discovery (equivalent to --no-lldp).
+	#[arg(long, default_value_t = 60, env = "ACCEL_READINESS_LLDP_TIMEOUT_SECS")]
+	pub lldp_timeout_secs: u64,
 }

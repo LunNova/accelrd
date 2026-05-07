@@ -27,7 +27,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 	init_tracing(&providers);
 
 	let (mut accelerators, backends) = enumerate_all().await?;
-	let topology = discover::discover(&args, &mut accelerators);
+	let topology = discover::discover(&args, &mut accelerators).await;
 	log_inventory(&accelerators, &topology);
 
 	let labels = topo_labels::build(&topology, &accelerators);
@@ -82,8 +82,18 @@ fn log_inventory(accelerators: &[crate::sensors::Accelerator], topology: &crate:
 		zone = ?topology.zone,
 		block = ?topology.block,
 		rack = ?topology.rack,
+		lldp_neighbors = topology.lldp_neighbors.len(),
 		"topology",
 	);
+	for n in &topology.lldp_neighbors {
+		tracing::info!(
+			interface = %n.interface,
+			chassis = %n.chassis_id,
+			port = %n.port_id,
+			system_name = ?n.system_name,
+			"lldp neighbor",
+		);
+	}
 }
 
 /// Tracing-subscriber init. Three layers:

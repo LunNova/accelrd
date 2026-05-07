@@ -8,6 +8,7 @@
 
 pub mod discover;
 pub mod labels;
+pub mod lldp;
 
 use serde::Serialize;
 
@@ -20,6 +21,7 @@ pub struct NodeTopology {
 	pub block: Option<String>,
 	pub rack: Option<String>,
 	pub fabric_domains: Vec<FabricDomain>,
+	pub lldp_neighbors: Vec<lldp::LldpNeighbor>,
 }
 
 #[derive(Debug, Clone, Serialize)]

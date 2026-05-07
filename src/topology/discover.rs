@@ -3,25 +3,29 @@
 
 //! Vendor-agnostic node topology discovery. xGMI graphs come from sysfs
 //! (`/sys/class/drm/cardN/device/xgmi_*`); NVLink is unreachable without
-//! NVML and falls back to single-card domains.
+//! NVML and falls back to single-card domains. Rack inference, when not
+//! configured via `--rack`, comes from LLDP neighbour discovery on link.
 
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 use std::path::Path;
+use std::time::Duration;
 
 use crate::config::Args;
 use crate::sensors::{Accelerator, AcceleratorId, Vendor};
 
+use super::lldp;
 use super::{FabricDomain, FabricKind, NodeTopology};
 
-pub fn discover(args: &Args, accelerators: &mut [Accelerator]) -> NodeTopology {
+pub async fn discover(args: &Args, accelerators: &mut [Accelerator]) -> NodeTopology {
 	let mut topology = NodeTopology {
 		region: std::env::var("ACCEL_READINESS_REGION").ok(),
 		zone: std::env::var("ACCEL_READINESS_ZONE").ok(),
 		block: args.block.clone(),
 		rack: args.rack.clone(),
 		fabric_domains: Vec::new(),
+		lldp_neighbors: Vec::new(),
 	};
 
 	// Group accelerators into fabric domains. Per-vendor:
@@ -54,7 +58,37 @@ pub fn discover(args: &Args, accelerators: &mut [Accelerator]) -> NodeTopology {
 		});
 	}
 
+	// LLDP: passively listen for switch advertisements. Default switch
+	// LLDP TX interval is 30s, so the timeout needs to be ≥ that to
+	// catch one frame. We use the most-common Chassis ID across
+	// observed interfaces as the inferred rack ID (when --rack wasn't
+	// passed explicitly).
+	if !args.no_lldp {
+		topology.lldp_neighbors = lldp::discover(Duration::from_secs(args.lldp_timeout_secs)).await;
+		if topology.rack.is_none()
+			&& let Some(inferred) = infer_rack_from_lldp(&topology.lldp_neighbors)
+		{
+			tracing::info!(rack = %inferred, "rack inferred from LLDP chassis");
+			topology.rack = Some(inferred);
+		}
+	}
+
 	topology
+}
+
+/// Pick the most-frequent chassis ID across observed neighbours and
+/// return its rack-slug form. When all interfaces see the same switch
+/// (the common case on a single-uplink host), this just returns that
+/// chassis. Multi-homed hosts pick the dominant uplink.
+fn infer_rack_from_lldp(neighbors: &[lldp::LldpNeighbor]) -> Option<String> {
+	let mut counts: HashMap<String, (usize, &lldp::LldpNeighbor)> = HashMap::new();
+	for n in neighbors {
+		counts
+			.entry(n.chassis_id.clone())
+			.and_modify(|(c, _)| *c += 1)
+			.or_insert((1, n));
+	}
+	counts.into_values().max_by_key(|(c, _)| *c).map(|(_, n)| n.rack_slug())
 }
 
 /// Build xGMI connected components from AMD accelerator sysfs. Lone AMD

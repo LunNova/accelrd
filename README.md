@@ -113,11 +113,18 @@ follow-up if richer Nvidia coverage becomes load-bearing.
   driver.loaded, temperature.below_throttle, memory.floor.
 - ✅ K8s labeler (auto-disabled outside cluster).
 - ✅ K8s labeler in-cluster PATCH path (RFC 7396 merge, retry/backoff, stale-key removal).
-- ✅ Manifests (DaemonSet YAML + RBAC + namespace, sysfs/proc hostPath read-only).
+- ✅ LLDP rack auto-discovery via raw AF_PACKET socket (no lldpd dep).
+  Subscribes to the IEEE LLDP multicast on each Ethernet interface,
+  parses TLVs, infers `accel-topo.lunnova.dev/rack` from the dominant
+  switch chassis. Verified across two real hosts on a shared TOR.
+- ✅ Manifests (DaemonSet YAML + RBAC + namespace, sysfs/proc hostPath read-only,
+  hostNetwork + CAP_NET_RAW for LLDP capture).
 - ✅ Nix flake (rust-overlay + pre-commit hooks mirroring mutel's setup).
 - ⏳ Vendor-runtime preflight checks (rccl/nccl loopback, ECC scrub, firmware
   version) — these need vendor SDKs or a sidecar container, deferred to a
   separate runtime-checks module.
 - ⏳ DRA `ResourceSlice` driver — separate workstream.
-- ⏳ LLDP-driven rack discovery — needs lldpd integration; config-fed today.
+- ⏳ MI300-family xGMI peer enumeration — current `xgmi_*` sysfs lookup misses
+  the MI300/Aqua-Vanjaram layout, so MI300 cards report as separate single-card
+  fabric domains. Sniff the right sysfs nodes on real hardware first.
 - ⏳ Cross-node fabric-domain reconciliation — cluster-side concern.

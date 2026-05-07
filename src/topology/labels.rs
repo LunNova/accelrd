@@ -108,6 +108,23 @@ pub fn build(topology: &NodeTopology, accelerators: &[Accelerator]) -> LabelSet 
 		set.annotations.insert("accel.lunnova.dev/fabric-graph".into(), s);
 	}
 
+	// LLDP — one label per observed switch chassis (so multi-uplink
+	// hosts plugged into different TORs surface that fact), plus a
+	// JSON annotation with full per-interface neighbour detail.
+	if !topology.lldp_neighbors.is_empty() {
+		let mut chassis_seen: BTreeSet<&str> = BTreeSet::new();
+		for n in &topology.lldp_neighbors {
+			let slug = n.rack_slug();
+			if chassis_seen.insert(n.chassis_id.as_str()) {
+				set.labels.insert(format!("accel-topo.lunnova.dev/lldp.chassis.{slug}"), "1".into());
+			}
+		}
+		set.labels.insert("accel-topo.lunnova.dev/lldp.chassis-count".into(), chassis_seen.len().to_string());
+		if let Ok(s) = serde_json::to_string(&topology.lldp_neighbors) {
+			set.annotations.insert("accel-topo.lunnova.dev/lldp-neighbors".into(), s);
+		}
+	}
+
 	set
 }
 

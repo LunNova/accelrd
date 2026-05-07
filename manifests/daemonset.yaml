@@ -58,7 +58,10 @@ spec:
           effect: NoSchedule
       priorityClassName: system-node-critical
       hostPID: false
-      hostNetwork: false
+      # hostNetwork is required for LLDP capture: link-local multicast
+      # (01:80:c2:00:00:0e) is delivered by the kernel to interfaces in
+      # the host network namespace, not pod-internal namespaces.
+      hostNetwork: true
       automountServiceAccountToken: true
       containers:
         - name: accel-readiness
@@ -92,6 +95,10 @@ spec:
             runAsGroup: 65532
             capabilities:
               drop: ["ALL"]
+              # CAP_NET_RAW is required to open the AF_PACKET socket
+              # used for LLDP capture. Drop it (or set --no-lldp) if
+              # rack auto-discovery isn't needed.
+              add: ["NET_RAW"]
             seccompProfile:
               type: RuntimeDefault
           resources:

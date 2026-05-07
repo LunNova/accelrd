@@ -18,7 +18,7 @@ use tower_http::compression::CompressionLayer;
 
 use super::assets;
 use super::k8s::{self as admin_k8s, ClusterSummary, NodeView};
-use super::mutel::MetricQueryParams;
+use super::mutel::{MetricQueryParams, NodeRollup};
 use super::state::AppState;
 
 /// Window for "latest" mutel queries. The daemon emits live metrics
@@ -225,40 +225,43 @@ async fn fleet(State(state): State<AppState>) -> Json<FleetResponse> {
 	// of unified-memory carving across 6 APUs."
 	let dedicated_used = state
 		.mutel
-		.latest_by_node("accel.memory.dedicated.used", "sum", FLEET_WINDOW_SECS);
-	let dedicated_total = state
-		.mutel
-		.latest_by_node("accel.memory.dedicated.total", "sum", FLEET_WINDOW_SECS);
+		.latest_by_node("accel.memory.dedicated.used", NodeRollup::Sum, FLEET_WINDOW_SECS);
+	let dedicated_total =
+		state
+			.mutel
+			.latest_by_node("accel.memory.dedicated.total", NodeRollup::Sum, FLEET_WINDOW_SECS);
 	let unified_used = state
 		.mutel
-		.latest_by_node("accel.memory.unified.used", "sum", FLEET_WINDOW_SECS);
+		.latest_by_node("accel.memory.unified.used", NodeRollup::Sum, FLEET_WINDOW_SECS);
 	let unified_total = state
 		.mutel
-		.latest_by_node("accel.memory.unified.total", "sum", FLEET_WINDOW_SECS);
+		.latest_by_node("accel.memory.unified.total", NodeRollup::Sum, FLEET_WINDOW_SECS);
+	// Host metrics: one series per node (no per-card multiplicity), so
+	// Max and Sum collapse to the same number — Max is just the
+	// "principle of least surprise" choice.
 	let ram_total = state
 		.mutel
-		.latest_by_node("host.memory.total_bytes", "max", FLEET_WINDOW_SECS);
+		.latest_by_node("host.memory.total_bytes", NodeRollup::Max, FLEET_WINDOW_SECS);
 	let ram_avail = state
 		.mutel
-		.latest_by_node("host.memory.available_bytes", "max", FLEET_WINDOW_SECS);
-	// Disk: take the largest mount per node. mutel's `max` aggregator
-	// across the per-mount series gives us "biggest disk on the node",
+		.latest_by_node("host.memory.available_bytes", NodeRollup::Max, FLEET_WINDOW_SECS);
+	// Disk: per-mount series; Max picks the biggest mount on the node,
 	// which is the workload-relevant figure.
 	let disk_free = state
 		.mutel
-		.latest_by_node("host.disk.free_bytes", "max", FLEET_WINDOW_SECS);
+		.latest_by_node("host.disk.free_bytes", NodeRollup::Max, FLEET_WINDOW_SECS);
 	let disk_total = state
 		.mutel
-		.latest_by_node("host.disk.total_bytes", "max", FLEET_WINDOW_SECS);
+		.latest_by_node("host.disk.total_bytes", NodeRollup::Max, FLEET_WINDOW_SECS);
 	let power = state
 		.mutel
-		.latest_by_node("accel.power.usage", "sum", FLEET_WINDOW_SECS);
+		.latest_by_node("accel.power.usage", NodeRollup::Sum, FLEET_WINDOW_SECS);
 	let temp = state
 		.mutel
-		.latest_by_node("accel.temperature", "max", FLEET_WINDOW_SECS);
+		.latest_by_node("accel.temperature", NodeRollup::Max, FLEET_WINDOW_SECS);
 	let util = state
 		.mutel
-		.latest_by_node("accel.utilization", "avg", FLEET_WINDOW_SECS);
+		.latest_by_node("accel.utilization", NodeRollup::Avg, FLEET_WINDOW_SECS);
 
 	let (du, dt, uu, ut_, rt, ra, df, dtot, pw, tmp, util_) = tokio::join!(
 		dedicated_used,

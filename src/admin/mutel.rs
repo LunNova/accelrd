@@ -70,15 +70,30 @@ impl MutelClient {
 			.with_context(|| format!("GET {url} json"))
 	}
 
-	/// Query a metric, group by `r:k8s.node.name`, and return the latest
-	/// value per node over the last `window_secs` seconds. Returns a
-	/// `(node_name → value)` map. Nodes with no data in the window are
-	/// absent from the map. Uses `max_points=1` so mutel collapses the
-	/// whole window into one bucketed value per group.
+	/// Roll up the latest value of a gauge metric to a per-node number.
+	///
+	/// Why we don't just use mutel's `group_by=r:k8s.node.name&agg=sum`:
+	/// mutel's `agg` is a single aggregator applied to BOTH dimensions
+	/// (across-time within a bucket AND across-series at the same
+	/// timestamp). For a steady-value gauge — VRAM total, RAM total —
+	/// `agg=sum` over a 5-minute window sums every timestamp and every
+	/// series, producing N_ticks × N_cards × value instead of the per-card
+	/// values summed once. We saw this in the lab: tsukikage's single
+	/// 64 GiB MI210 reported as 320 GiB (5 ticks of buckets × 64 GiB)
+	/// and lun-hisame's 4090 reported 96 GiB because of stale series from
+	/// recent pod restarts that hadn't aged out of the 5-min window.
+	///
+	/// The fix is to roll up client-side:
+	///  1. Query without group_by so each series is its own group.
+	///  2. Use `agg=avg` so each series collapses to its time-average
+	///     (== the gauge value for a steady metric).
+	///  3. Bucket-by k8s.node.name in this function and apply `op` across
+	///     series on the same node — for memory totals that's `Sum`, for
+	///     temperature it's `Max`, for utilization `Avg`.
 	pub async fn latest_by_node(
 		&self,
 		name: &str,
-		agg: &str,
+		op: NodeRollup,
 		window_secs: u64,
 	) -> anyhow::Result<BTreeMap<String, f64>> {
 		let now = SystemTime::now()
@@ -86,20 +101,20 @@ impl MutelClient {
 			.context("system time")?
 			.as_secs() as i64;
 		let params = MetricQueryParams {
-			group_by: Some("r:k8s.node.name".into()),
-			agg: Some(agg.into()),
+			group_by: None,
+			agg: Some("avg".into()),
 			start: Some(now.saturating_sub(window_secs as i64)),
 			end: Some(now),
 			max_points: Some(1),
 			..Default::default()
 		};
 		let v = self.query_metric(name, &params).await?;
-		let mut out = BTreeMap::new();
+		let mut per_node: BTreeMap<String, Vec<f64>> = BTreeMap::new();
 		let groups = v.get("groups").and_then(|g| g.as_array()).cloned().unwrap_or_default();
 		for g in groups {
 			let node = g
-				.get("key")
-				.and_then(|k| k.get("r:k8s.node.name"))
+				.get("labels_example")
+				.and_then(|l| l.get("r:k8s.node.name"))
 				.and_then(|v| v.as_str())
 				.unwrap_or("")
 				.to_string();
@@ -116,7 +131,23 @@ impl MutelClient {
 			if let Some(v) = value
 				&& v.is_finite()
 			{
-				out.insert(node, v);
+				per_node.entry(node).or_default().push(v);
+			}
+		}
+		let mut out = BTreeMap::new();
+		for (node, vals) in per_node {
+			let rolled = match op {
+				NodeRollup::Sum => vals.iter().sum::<f64>(),
+				NodeRollup::Max => vals.iter().fold(f64::NEG_INFINITY, |a, b| a.max(*b)),
+				NodeRollup::Avg => {
+					if vals.is_empty() {
+						continue;
+					}
+					vals.iter().sum::<f64>() / vals.len() as f64
+				}
+			};
+			if rolled.is_finite() {
+				out.insert(node, rolled);
 			}
 		}
 		Ok(out)
@@ -130,6 +161,16 @@ impl MutelClient {
 		resp.error_for_status().with_context(|| format!("GET {url} status"))?;
 		Ok(())
 	}
+}
+
+/// How to combine per-series gauge values into one number per node.
+/// Memory totals → `Sum` (across cards on the node); temperature → `Max`
+/// (the hottest); utilization → `Avg` (mean utilization across cards).
+#[derive(Debug, Clone, Copy)]
+pub enum NodeRollup {
+	Sum,
+	Max,
+	Avg,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

@@ -79,7 +79,10 @@ spec:
             # is the per-node daemon. Sibling deployments (prober, probe pods
             # created by it) live under manifests/prober/.
             - daemon
-            - --otlp-endpoint=$(ACCELRD_OTLP_ENDPOINT)
+            # argh requires --flag value (space-separated); --flag=value
+            # is rejected as an unrecognized top-level argument.
+            - --otlp-endpoint
+            - $(ACCELRD_OTLP_ENDPOINT)
           env:
             # Downward API: feed the pod's own identity into the daemon
             # so the OTel resource ships proper k8s.* semantic

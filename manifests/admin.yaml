@@ -52,9 +52,14 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - admin
-            - --listen=$(ACCELRD_ADMIN_LISTEN)
-            - --mutel-endpoint=$(ACCELRD_MUTEL_ENDPOINT)
-            - --otlp-endpoint=$(ACCELRD_OTLP_ENDPOINT)
+            # argh requires --flag value (space-separated); --flag=value
+            # is rejected as an unrecognized top-level argument.
+            - --listen
+            - $(ACCELRD_ADMIN_LISTEN)
+            - --mutel-endpoint
+            - $(ACCELRD_MUTEL_ENDPOINT)
+            - --otlp-endpoint
+            - $(ACCELRD_OTLP_ENDPOINT)
           ports:
             - name: http
               containerPort: 8080

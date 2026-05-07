@@ -78,6 +78,19 @@ pub struct ProberArgs {
 	#[argh(option)]
 	pub max_concurrent_pairs: Option<u32>,
 
+	/// extended-resource claim for probe pods, key=value (repeatable).
+	/// Different clusters expose RDMA hardware via different device
+	/// plugins; the right key depends on which is installed:
+	///   --probe-resource squat.ai/infiniband=1
+	///   --probe-resource rdma/hca_shared_devices_a=1
+	///   --probe-resource nvidia.com/hostdev=1
+	/// Without a device-plugin claim, the kernel device-cgroup blocks
+	/// /dev/infiniband opens with EPERM even with the hostPath mount —
+	/// the plugin's allocation programs the cgroup-allow rule.
+	/// (env: ACCELRD_PROBER_PROBE_RESOURCES, comma-separated key=value list)
+	#[argh(option)]
+	pub probe_resource: Vec<String>,
+
 	/// run one reconcile pass and exit (used in tests)
 	#[argh(switch)]
 	pub once: bool,
@@ -93,6 +106,7 @@ pub struct Resolved {
 	pub namespace: String,
 	pub test_duration_secs: u64,
 	pub max_concurrent_pairs: u32,
+	pub probe_resources: Vec<(String, String)>,
 	pub once: bool,
 }
 
@@ -128,9 +142,31 @@ impl ProberArgs {
 				.max_concurrent_pairs
 				.or_else(|| env_u64("ACCELRD_PROBER_MAX_CONCURRENT_PAIRS").map(|v| v as u32))
 				.unwrap_or(4),
+			probe_resources: resolve_probe_resources(self.probe_resource),
 			once: self.once,
 		}
 	}
+}
+
+/// Parse `key=value` strings from CLI flags + the comma-separated env
+/// fallback. Malformed entries are dropped with a tracing warning rather
+/// than failing startup — operators can fix the manifest without
+/// restarting the deployment going through a CrashLoopBackOff cycle.
+fn resolve_probe_resources(cli: Vec<String>) -> Vec<(String, String)> {
+	let mut raw = cli;
+	if let Some(env) = env_string("ACCELRD_PROBER_PROBE_RESOURCES") {
+		raw.extend(env.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()));
+	}
+	let mut out = Vec::new();
+	for entry in raw {
+		match entry.split_once('=') {
+			Some((k, v)) if !k.trim().is_empty() && !v.trim().is_empty() => {
+				out.push((k.trim().into(), v.trim().into()));
+			}
+			_ => tracing::warn!(entry = %entry, "ignoring malformed probe-resource (expected key=value)"),
+		}
+	}
+	out
 }
 
 pub async fn run(args: Resolved) -> anyhow::Result<()> {

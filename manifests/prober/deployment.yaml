@@ -75,6 +75,18 @@ spec:
               value: ghcr.io/lunnova/accelrd:latest
             - name: ACCELRD_OTLP_ENDPOINT
               value: "http://otel-collector.observability.svc.cluster.local:4318"
+            # Extended-resource claims spliced into each probe pod's
+            # container `resources.{requests,limits}` map. Format is a
+            # comma-separated list of key=value pairs. Pick the key that
+            # matches the RDMA device plugin installed on the cluster:
+            #   squat.ai/infiniband=1     (squat-ai/k8s-rdma-shared-dev-plugin)
+            #   rdma/hca_shared_devices_a=1   (Mellanox shared mode)
+            #   nvidia.com/hostdev=1      (NVIDIA Network Operator)
+            # Without this, kubelet doesn't program the device-cgroup
+            # allow rule for /dev/infiniband and probe pods see EPERM
+            # opening the uverbs files even with the hostPath mount.
+            - name: ACCELRD_PROBER_PROBE_RESOURCES
+              value: "squat.ai/infiniband=1"
             - name: RUST_LOG
               value: "info,opentelemetry=warn,reqwest=error,kube=info"
           securityContext:

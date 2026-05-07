@@ -124,10 +124,7 @@ pub fn build_pod(s: &PodSpec<'_>) -> anyhow::Result<Pod> {
 					},
 					"seccompProfile": {"type": "RuntimeDefault"},
 				},
-				"resources": {
-					"requests": {"cpu": "100m", "memory": "64Mi"},
-					"limits": {"cpu": "500m", "memory": "256Mi"},
-				},
+				"resources": resources(s.args),
 				"volumeMounts": [
 					{"name": "dev-infiniband", "mountPath": "/dev/infiniband"},
 					{"name": "sys", "mountPath": "/sys", "readOnly": true},
@@ -140,6 +137,27 @@ pub fn build_pod(s: &PodSpec<'_>) -> anyhow::Result<Pod> {
 		},
 	});
 	serde_json::from_value(pod).context("synthesize Pod from JSON template")
+}
+
+/// Build the container's `resources` map. CPU/memory limits stay
+/// hardcoded (perftest is small; this isn't operator policy). Extended
+/// resources from `args.probe_resources` (e.g. `squat.ai/infiniband=1`)
+/// are spliced into BOTH requests and limits — Kubernetes requires they
+/// match exactly for extended-resource scheduling, and setting only
+/// limits leaves `requests == limits` implicit, which is correct but
+/// less explicit for anyone reading the rendered Pod spec.
+fn resources(args: &Resolved) -> Value {
+	let mut requests = serde_json::Map::new();
+	requests.insert("cpu".into(), json!("100m"));
+	requests.insert("memory".into(), json!("64Mi"));
+	let mut limits = serde_json::Map::new();
+	limits.insert("cpu".into(), json!("500m"));
+	limits.insert("memory".into(), json!("256Mi"));
+	for (k, v) in &args.probe_resources {
+		requests.insert(k.clone(), json!(v));
+		limits.insert(k.clone(), json!(v));
+	}
+	json!({ "requests": requests, "limits": limits })
 }
 
 pub async fn create(api: &Api<Pod>, pod: &Pod) -> anyhow::Result<Pod> {

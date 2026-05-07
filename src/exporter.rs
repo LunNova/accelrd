@@ -5,6 +5,7 @@
 //! transport so it works against any OTLP backend (mutel for local dev,
 //! otelcol/tempo/jaeger in prod).
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -78,16 +79,170 @@ pub fn init(args: &Args, node_name: &str) -> anyhow::Result<Providers> {
 	Ok(Providers { tracer, meter, logger })
 }
 
+/// Build the OTel `Resource` for this process. Attribute precedence
+/// (low → high), per OTel spec:
+///   1. autodetected defaults (service/host/os/process/k8s)
+///   2. `OTEL_RESOURCE_ATTRIBUTES` env (comma-separated `k=v` pairs)
+///   3. `OTEL_SERVICE_NAME` env (overrides `service.name` only) — applied
+///      already by clap on `args.service_name`
+///
+/// In a K8s pod, the `k8s.*` block is populated from a combination of the
+/// service-account namespace file and downward-API env vars set by the
+/// DaemonSet manifest. Outside a pod, the `k8s.*` block is omitted.
 fn build_resource(args: &Args, node_name: &str) -> Resource {
-	Resource::builder_empty()
-		.with_attributes([
-			KeyValue::new("service.name", args.service_name.clone()),
-			KeyValue::new("service.version", env!("CARGO_PKG_VERSION").to_string()),
-			KeyValue::new("host.name", node_name.to_string()),
-			KeyValue::new("host.arch", std::env::consts::ARCH.to_string()),
-			KeyValue::new("os.type", std::env::consts::OS.to_string()),
-			KeyValue::new("telemetry.sdk.name", "opentelemetry"),
-			KeyValue::new("telemetry.sdk.language", "rust"),
-		])
-		.build()
+	let mut attrs: BTreeMap<String, String> = BTreeMap::new();
+
+	// Service identity.
+	attrs.insert("service.name".into(), args.service_name.clone());
+	attrs.insert("service.version".into(), env!("CARGO_PKG_VERSION").into());
+	attrs.insert("telemetry.sdk.name".into(), "opentelemetry".into());
+	attrs.insert("telemetry.sdk.language".into(), "rust".into());
+
+	// Host. `host.name` here means the *machine* hosting the process, which
+	// in K8s is the Node — the daemon's `node_name` resolver already prefers
+	// NODE_NAME (downward API) over the local hostname for that reason.
+	attrs.insert("host.name".into(), node_name.into());
+	attrs.insert("host.arch".into(), normalize_arch(std::env::consts::ARCH).into());
+	attrs.insert("os.type".into(), std::env::consts::OS.into());
+	if let Some(release) = read_trimmed("/proc/sys/kernel/osrelease") {
+		attrs.insert("os.description".into(), release);
+	}
+	if let Some(id) = read_machine_id() {
+		attrs.insert("host.id".into(), id);
+	}
+
+	// Process.
+	attrs.insert("process.pid".into(), std::process::id().to_string());
+	if let Ok(exe) = std::env::current_exe()
+		&& let Some(name) = exe.file_name().and_then(|s| s.to_str())
+	{
+		attrs.insert("process.executable.name".into(), name.into());
+	}
+
+	// K8s — only when an SA token is mounted (the cheapest indicator of "we
+	// are in a pod"). Pod UID, when available, doubles as service.instance.id.
+	let pod_uid = if std::path::Path::new("/var/run/secrets/kubernetes.io/serviceaccount").exists() {
+		populate_k8s_attrs(&mut attrs, node_name)
+	} else {
+		None
+	};
+
+	// service.instance.id should be unique per process instance for the
+	// lifetime of that instance. Pod UID is ideal in K8s; outside, combine
+	// boot_id (per-boot UUID) with PID so the value is stable across the
+	// process's lifetime but doesn't alias across reboots.
+	let instance_id = pod_uid.unwrap_or_else(|| match read_trimmed("/proc/sys/kernel/random/boot_id") {
+		Some(b) => format!("{b}-{}", std::process::id()),
+		None => std::process::id().to_string(),
+	});
+	attrs.insert("service.instance.id".into(), instance_id);
+
+	// OTEL_RESOURCE_ATTRIBUTES merge (overrides anything above).
+	if let Ok(env_attrs) = std::env::var("OTEL_RESOURCE_ATTRIBUTES") {
+		for entry in env_attrs.split(',') {
+			let entry = entry.trim();
+			if entry.is_empty() {
+				continue;
+			}
+			if let Some((k, v)) = entry.split_once('=') {
+				let k = k.trim();
+				if !k.is_empty() {
+					attrs.insert(k.into(), percent_decode(v.trim()));
+				}
+			}
+		}
+	}
+
+	let kvs: Vec<KeyValue> = attrs.into_iter().map(|(k, v)| KeyValue::new(k, v)).collect();
+	Resource::builder_empty().with_attributes(kvs).build()
+}
+
+/// Populate `k8s.*` attributes from the pod's downward API env + the SA
+/// namespace file. Returns the pod UID (when available) so the caller
+/// can adopt it as `service.instance.id`.
+fn populate_k8s_attrs(attrs: &mut BTreeMap<String, String>, node_name: &str) -> Option<String> {
+	if let Some(ns) = read_trimmed("/var/run/secrets/kubernetes.io/serviceaccount/namespace") {
+		attrs.insert("k8s.namespace.name".into(), ns);
+	}
+	// k8s.node.name is just the resolved node identity — it's the one
+	// thing that doesn't need new manifest plumbing.
+	attrs.insert("k8s.node.name".into(), node_name.into());
+
+	// Downward-API env vars (set by the DaemonSet manifest).
+	let env_to_attr = &[
+		("POD_NAME", "k8s.pod.name"),
+		("POD_UID", "k8s.pod.uid"),
+		("POD_NAMESPACE", "k8s.namespace.name"),
+		("CONTAINER_NAME", "k8s.container.name"),
+		("DAEMONSET_NAME", "k8s.daemonset.name"),
+		("CLUSTER_NAME", "k8s.cluster.name"),
+	];
+	for (env_var, attr_key) in env_to_attr {
+		if let Ok(v) = std::env::var(env_var)
+			&& !v.is_empty()
+		{
+			attrs.insert((*attr_key).into(), v);
+		}
+	}
+
+	// HOSTNAME-as-pod-name fallback. CRI-O/containerd typically set the
+	// container's hostname to the pod name when POD_NAME isn't explicitly
+	// passed; the SA-mount existence check upstream is sufficient evidence
+	// we're in a pod.
+	if !attrs.contains_key("k8s.pod.name")
+		&& let Ok(h) = std::env::var("HOSTNAME")
+		&& !h.is_empty()
+	{
+		attrs.insert("k8s.pod.name".into(), h);
+	}
+
+	attrs.get("k8s.pod.uid").cloned()
+}
+
+fn read_trimmed(path: &str) -> Option<String> {
+	std::fs::read_to_string(path).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+/// /etc/machine-id is canonical on systemd hosts; /var/lib/dbus/machine-id
+/// covers older non-systemd setups.
+fn read_machine_id() -> Option<String> {
+	for p in ["/etc/machine-id", "/var/lib/dbus/machine-id"] {
+		if let Some(s) = read_trimmed(p) {
+			return Some(s);
+		}
+	}
+	None
+}
+
+/// Map Rust's `cfg(target_arch)` strings to OTel semconv `host.arch` values.
+fn normalize_arch(rust_arch: &str) -> &str {
+	match rust_arch {
+		"x86_64" => "amd64",
+		"aarch64" => "arm64",
+		"arm" => "arm32",
+		"powerpc" => "ppc32",
+		"powerpc64" => "ppc64",
+		other => other,
+	}
+}
+
+/// Decode percent-encoding allowed in `OTEL_RESOURCE_ATTRIBUTES` values.
+/// Invalid escapes are passed through untouched rather than dropped.
+fn percent_decode(s: &str) -> String {
+	let bytes = s.as_bytes();
+	let mut out = Vec::with_capacity(bytes.len());
+	let mut i = 0;
+	while i < bytes.len() {
+		if bytes[i] == b'%'
+			&& i + 2 < bytes.len()
+			&& let (Some(h), Some(l)) = ((bytes[i + 1] as char).to_digit(16), (bytes[i + 2] as char).to_digit(16))
+		{
+			out.push((h * 16 + l) as u8);
+			i += 3;
+			continue;
+		}
+		out.push(bytes[i]);
+		i += 1;
+	}
+	String::from_utf8(out).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
 }

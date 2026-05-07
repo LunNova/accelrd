@@ -20,8 +20,8 @@ use super::{FabricDomain, FabricKind, NodeTopology};
 
 pub async fn discover(args: &Args, accelerators: &mut [Accelerator]) -> NodeTopology {
 	let mut topology = NodeTopology {
-		region: std::env::var("ACCEL_READINESS_REGION").ok(),
-		zone: std::env::var("ACCEL_READINESS_ZONE").ok(),
+		region: std::env::var("ACCELRD_REGION").ok(),
+		zone: std::env::var("ACCELRD_ZONE").ok(),
 		block: args.block.clone(),
 		rack: args.rack.clone(),
 		fabric_domains: Vec::new(),

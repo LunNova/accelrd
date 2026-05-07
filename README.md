@@ -1,4 +1,4 @@
-# accel-readiness
+# accelrd
 
 Vendor-neutral GPU/accelerator readiness daemon. Designed to run as a
 Kubernetes DaemonSet on accelerator nodes, where it:

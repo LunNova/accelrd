@@ -47,7 +47,7 @@ struct PreflightMetrics {
 
 impl PreflightMetrics {
 	fn new() -> Self {
-		let meter = global::meter("accel-readiness.preflight");
+		let meter = global::meter("accelrd.preflight");
 		let duration_g = meter
 			.f64_gauge("accel.preflight.check.duration_ms")
 			.with_unit("ms")

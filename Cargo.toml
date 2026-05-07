@@ -1,5 +1,5 @@
 [package]
-name = "accel-readiness"
+name = "accelrd"
 version = "0.1.0"
 edition = "2024"
 description = "Vendor-neutral accelerator readiness daemon — sysfs-only sensors, OTLP telemetry, K8s topology labels"

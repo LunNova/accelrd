@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LunNova
 // SPDX-License-Identifier: CC0-1.0
 
-//! accel-readiness — vendor-neutral accelerator readiness daemon.
+//! accelrd — vendor-neutral accelerator readiness daemon.
 //!
 //! Reads accelerator state via sysfs / /proc only (no NVML, no ROCm,
 //! no nvidia-smi shelling). Emits live OTLP metrics/logs/traces and,

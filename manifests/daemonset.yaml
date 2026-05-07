@@ -1,30 +1,30 @@
 # SPDX-FileCopyrightText: 2026 LunNova
 # SPDX-License-Identifier: CC0-1.0
 #
-# accel-readiness DaemonSet. Runs one pod per accelerator-bearing node
+# accelrd DaemonSet. Runs one pod per accelerator-bearing node
 # (selected via nodeSelector or tolerations — adjust below to match your
 # cluster's accelerator-node labels).
 #
 # Reads /sys and /proc read-only. Patches its own node's labels via the
-# accel-readiness ServiceAccount (see rbac.yaml).
+# accelrd ServiceAccount (see rbac.yaml).
 #
-# Set ACCEL_READINESS_OTLP_ENDPOINT to your collector's address. Set
-# ACCEL_READINESS_RACK / ACCEL_READINESS_BLOCK from a node's existing
+# Set ACCELRD_OTLP_ENDPOINT to your collector's address. Set
+# ACCELRD_RACK / ACCELRD_BLOCK from a node's existing
 # labels via env-from-fieldRef if you have inventory automation, or
 # bake them into per-node ConfigMaps.
 ---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: accel-readiness
-  namespace: accel-readiness
+  name: accelrd
+  namespace: accelrd
   labels:
-    app.kubernetes.io/name: accel-readiness
+    app.kubernetes.io/name: accelrd
     app.kubernetes.io/component: agent
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: accel-readiness
+      app.kubernetes.io/name: accelrd
   updateStrategy:
     type: RollingUpdate
     rollingUpdate:
@@ -32,10 +32,10 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: accel-readiness
+        app.kubernetes.io/name: accelrd
         app.kubernetes.io/component: agent
     spec:
-      serviceAccountName: accel-readiness
+      serviceAccountName: accelrd
       # Run only on nodes that have accelerators. Replace with whatever
       # label your cluster uses (NFD's `feature.node.kubernetes.io/pci-...`,
       # cloud provider label, etc.). Two common choices:
@@ -64,26 +64,26 @@ spec:
       hostNetwork: true
       automountServiceAccountToken: true
       containers:
-        - name: accel-readiness
-          image: ghcr.io/lunnova/accel-readiness:latest
+        - name: accelrd
+          image: ghcr.io/lunnova/accelrd:latest
           imagePullPolicy: IfNotPresent
           args:
-            - --otlp-endpoint=$(ACCEL_READINESS_OTLP_ENDPOINT)
+            - --otlp-endpoint=$(ACCELRD_OTLP_ENDPOINT)
           env:
             - name: NODE_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
-            - name: ACCEL_READINESS_OTLP_ENDPOINT
+            - name: ACCELRD_OTLP_ENDPOINT
               value: "http://otel-collector.observability.svc.cluster.local:4318"
             - name: RUST_LOG
               value: "info,opentelemetry=warn,reqwest=error"
             # Point at your inventory automation here:
-            # - name: ACCEL_READINESS_RACK
+            # - name: ACCELRD_RACK
             #   valueFrom:
             #     fieldRef:
             #       fieldPath: metadata.labels['topology.example.com/rack']
-            # - name: ACCEL_READINESS_BLOCK
+            # - name: ACCELRD_BLOCK
             #   valueFrom:
             #     fieldRef:
             #       fieldPath: metadata.labels['topology.example.com/block']

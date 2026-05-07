@@ -118,7 +118,7 @@ fn init_tracing(providers: &exporter::Providers) {
 			.with_default(tracing::Level::INFO)
 	};
 
-	let otel_tracer = providers.tracer.tracer("accel-readiness");
+	let otel_tracer = providers.tracer.tracer("accelrd");
 	let span_layer = tracing_opentelemetry::layer().with_tracer(otel_tracer).with_filter(otel_filter());
 	let log_layer = OpenTelemetryTracingBridge::new(&providers.logger).with_filter(otel_filter());
 

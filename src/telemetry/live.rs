@@ -18,7 +18,7 @@ pub async fn run(
 	interval: Duration,
 	once: bool,
 ) {
-	let meter = global::meter("accel-readiness.live");
+	let meter = global::meter("accelrd.live");
 	let mut gauges = GaugeCache::default();
 	loop {
 		tick(&backends, &accelerators, &meter, &mut gauges).await;

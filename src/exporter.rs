@@ -79,24 +79,26 @@ pub fn init(args: &Args, node_name: &str) -> anyhow::Result<Providers> {
 	Ok(Providers { tracer, meter, logger })
 }
 
-/// Build the OTel `Resource` for this process. Attribute precedence
-/// (low → high), per OTel spec:
-///   1. autodetected defaults (service/host/os/process/k8s)
-///   2. `OTEL_RESOURCE_ATTRIBUTES` env (comma-separated `k=v` pairs)
-///   3. `OTEL_SERVICE_NAME` env (overrides `service.name` only) — applied
-///      already by clap on `args.service_name`
+/// Build the OTel `Resource` for this process.
 ///
-/// In a K8s pod, the `k8s.*` block is populated from a combination of the
-/// service-account namespace file and downward-API env vars set by the
-/// DaemonSet manifest. Outside a pod, the `k8s.*` block is omitted.
+/// Uses `Resource::builder()` which seeds the SDK's default detectors:
+/// `TelemetryResourceDetector` (telemetry.sdk.{name,language,version}),
+/// `EnvResourceDetector` (parses `OTEL_RESOURCE_ATTRIBUTES` per spec,
+/// percent-decoding included), and `SdkProvidedResourceDetector`
+/// (service.name fallback). We layer our autodetected
+/// service/host/os/process/k8s attributes on top via `.with_attributes()`.
+///
+/// In a K8s pod, the `k8s.*` block is populated from the SA namespace file
+/// plus downward-API env vars set by the DaemonSet manifest. Outside a
+/// pod, the `k8s.*` block is omitted.
 fn build_resource(args: &Args, node_name: &str) -> Resource {
 	let mut attrs: BTreeMap<String, String> = BTreeMap::new();
 
-	// Service identity.
+	// Service identity beyond what the SDK detectors handle. The
+	// `SdkProvidedResourceDetector` only sets a fallback service.name;
+	// we always set ours explicitly so it wins.
 	attrs.insert("service.name".into(), args.service_name.clone());
 	attrs.insert("service.version".into(), env!("CARGO_PKG_VERSION").into());
-	attrs.insert("telemetry.sdk.name".into(), "opentelemetry".into());
-	attrs.insert("telemetry.sdk.language".into(), "rust".into());
 
 	// Host. `host.name` here means the *machine* hosting the process, which
 	// in K8s is the Node — the daemon's `node_name` resolver already prefers
@@ -137,24 +139,8 @@ fn build_resource(args: &Args, node_name: &str) -> Resource {
 	});
 	attrs.insert("service.instance.id".into(), instance_id);
 
-	// OTEL_RESOURCE_ATTRIBUTES merge (overrides anything above).
-	if let Ok(env_attrs) = std::env::var("OTEL_RESOURCE_ATTRIBUTES") {
-		for entry in env_attrs.split(',') {
-			let entry = entry.trim();
-			if entry.is_empty() {
-				continue;
-			}
-			if let Some((k, v)) = entry.split_once('=') {
-				let k = k.trim();
-				if !k.is_empty() {
-					attrs.insert(k.into(), percent_decode(v.trim()));
-				}
-			}
-		}
-	}
-
 	let kvs: Vec<KeyValue> = attrs.into_iter().map(|(k, v)| KeyValue::new(k, v)).collect();
-	Resource::builder_empty().with_attributes(kvs).build()
+	Resource::builder().with_attributes(kvs).build()
 }
 
 /// Populate `k8s.*` attributes from the pod's downward API env + the SA
@@ -224,25 +210,4 @@ fn normalize_arch(rust_arch: &str) -> &str {
 		"powerpc64" => "ppc64",
 		other => other,
 	}
-}
-
-/// Decode percent-encoding allowed in `OTEL_RESOURCE_ATTRIBUTES` values.
-/// Invalid escapes are passed through untouched rather than dropped.
-fn percent_decode(s: &str) -> String {
-	let bytes = s.as_bytes();
-	let mut out = Vec::with_capacity(bytes.len());
-	let mut i = 0;
-	while i < bytes.len() {
-		if bytes[i] == b'%'
-			&& i + 2 < bytes.len()
-			&& let (Some(h), Some(l)) = ((bytes[i + 1] as char).to_digit(16), (bytes[i + 2] as char).to_digit(16))
-		{
-			out.push((h * 16 + l) as u8);
-			i += 3;
-			continue;
-		}
-		out.push(bytes[i]);
-		i += 1;
-	}
-	String::from_utf8(out).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
 }

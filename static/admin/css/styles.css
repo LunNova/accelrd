@@ -93,7 +93,7 @@ a:hover { text-decoration: underline; }
 }
 
 .nav-status { display: flex; gap: 0.5rem; align-items: center; }
-.status-pill {
+.status-tag {
 	font-family: var(--font-mono);
 	font-size: 0.78rem;
 	padding: 2px 8px;
@@ -101,8 +101,8 @@ a:hover { text-decoration: underline; }
 	color: var(--text-secondary);
 	border: 1px solid var(--border-subtle);
 }
-.status-pill.ok { color: var(--success); border-color: var(--success); }
-.status-pill.err { color: var(--error); border-color: var(--error); }
+.status-tag.ok { color: var(--success); border-color: var(--success); }
+.status-tag.err { color: var(--error); border-color: var(--error); }
 
 /* Banner — shown when an upstream is degraded. */
 .banner {
@@ -120,37 +120,34 @@ a:hover { text-decoration: underline; }
 .view { display: none; flex-direction: column; flex: 1; overflow: hidden; }
 .view.active { display: flex; }
 
-.view-header {
-	display: flex;
+/* Navbar command slot — per-view controls live here, swapped via JS
+   `.hidden` toggles. Replaces the redundant per-view title bar. */
+.nav-cmd { display: flex; gap: 0.4rem; align-items: center; }
+.cmd-updated {
+	font-family: var(--font-mono);
+	font-size: 0.7rem;
+	color: var(--text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	padding-right: 0.25rem;
+}
+.legend {
+	display: inline-flex;
 	align-items: center;
-	justify-content: space-between;
-	padding: 0.75rem 1rem;
-	background: var(--bg-secondary);
-	border-bottom: 1px solid var(--border-color);
-	flex-shrink: 0;
+	gap: 0.3rem;
+	font-family: var(--font-mono);
+	font-size: 0.7rem;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--text-secondary);
+	margin-right: 0.4rem;
 }
-.view-header h2 {
-	position: relative;
-	font-size: 1rem;
-	font-weight: 600;
-	padding-bottom: 0.3em;
-}
-.view-header h2::after {
-	content: "";
-	position: absolute;
-	left: 0;
-	bottom: 0;
-	height: 3px;
-	width: 40%;
-	background: var(--accent-purple);
-}
-.view-controls { display: flex; gap: 0.5rem; align-items: center; }
-.legend { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8rem; color: var(--text-secondary); }
-.legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.legend-dot { width: 8px; height: 8px; display: inline-block; }
+.hidden { display: none !important; }
 
 .control-select, .control-input, .control-btn {
-	padding: 0.3rem 0.7rem;
-	font-size: 0.82rem;
+	padding: 0.18rem 0.55rem;
+	font-size: 0.78rem;
 	border: 1px solid var(--border-color);
 	background: var(--bg-tertiary);
 	color: var(--text-primary);
@@ -158,51 +155,42 @@ a:hover { text-decoration: underline; }
 	text-transform: uppercase;
 	letter-spacing: 0.04em;
 }
-.control-input { width: 240px; text-transform: none; letter-spacing: 0; }
+.control-input { width: 200px; text-transform: none; letter-spacing: 0; }
 .control-btn { cursor: pointer; transition: background 0.15s, color 0.15s; }
 .control-btn:hover { background: var(--border-subtle); color: var(--accent-hover); }
 
-/* Summary cards — terminal-dense, sharp corners, mono throughout. */
-.summary-row {
-	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-	gap: 0;
-	padding: 0;
-	border-bottom: 1px solid var(--border-color);
-	background: var(--bg-primary);
-}
-.summary-card {
+/* Status strip — single dense row of LABEL/VALUE pairs above the
+   cluster table. No sub-text; values encode their own context (e.g.
+   "12/15", "23/384G"). Wraps on narrow viewports, otherwise sits as
+   one ticker-style line. */
+.status-strip {
+	display: flex;
+	flex-wrap: wrap;
 	background: var(--bg-secondary);
+	border-bottom: 1px solid var(--border-color);
+}
+.stat {
+	padding: 0.25rem 0.7rem;
 	border-right: 1px solid var(--border-subtle);
-	padding: 0.4rem 0.75rem 0.5rem;
 	min-width: 0;
 }
-.summary-card:last-child { border-right: none; }
-.summary-card .label {
+.stat:last-child { border-right: none; }
+.stat-label {
 	font-family: var(--font-mono);
-	font-size: 0.68rem;
-	letter-spacing: 0.08em;
-	text-transform: uppercase;
+	font-size: 0.62rem;
 	color: var(--text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.09em;
+	line-height: 1;
 }
-.summary-card .value {
+.stat-value {
 	font-family: var(--font-mono);
-	font-size: 1.15rem;
+	font-size: 0.95rem;
 	font-weight: 600;
 	color: var(--accent-hover);
-	margin-top: 0.05rem;
+	margin-top: 2px;
+	line-height: 1.15;
 	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-.summary-card .sub {
-	font-family: var(--font-mono);
-	font-size: 0.72rem;
-	color: var(--text-secondary);
-	margin-top: 0;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
 }
 
 /* Tables — Bloomberg-dense: sharp dividers, tight rows, mono everywhere. */
@@ -246,7 +234,7 @@ a:hover { text-decoration: underline; }
 .verdict-untested, .verdict-none { color: var(--warning); }
 .dim { color: var(--text-muted); }
 
-.pill {
+.tag {
 	display: inline-block;
 	padding: 0 6px;
 	font-family: var(--font-mono);
@@ -258,9 +246,9 @@ a:hover { text-decoration: underline; }
 	background: var(--bg-tertiary);
 	color: var(--text-secondary);
 }
-.pill.ok { color: var(--success); border-color: var(--success); }
-.pill.err { color: var(--error); border-color: var(--error); }
-.pill.warn { color: var(--warning); border-color: var(--warning); }
+.tag.ok { color: var(--success); border-color: var(--success); }
+.tag.err { color: var(--error); border-color: var(--error); }
+.tag.warn { color: var(--warning); border-color: var(--warning); }
 
 /* Scavenge-parts action: shown next to a failed verdict. Half-serious
    easter egg — links to an eBay search seeded from the node's GPU/NIC

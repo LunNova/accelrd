@@ -18,7 +18,7 @@
 	const $ = (sel) => document.querySelector(sel);
 	const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
-	function setStatusPill(id, ok, label) {
+	function setStatusTag(id, ok, label) {
 		const el = document.getElementById(id);
 		if (!el) return;
 		el.textContent = label;
@@ -47,8 +47,8 @@
 	async function refreshHealth() {
 		try {
 			const h = await fetchJSON("/api/health");
-			setStatusPill("status-k8s", h.k8s.ok, "k8s: " + (h.k8s.ok ? "ok" : "down"));
-			setStatusPill("status-mutel", h.mutel.ok, "mutel: " + (h.mutel.ok ? "ok" : "down"));
+			setStatusTag("status-k8s", h.k8s.ok, "k8s: " + (h.k8s.ok ? "ok" : "down"));
+			setStatusTag("status-mutel", h.mutel.ok, "mutel: " + (h.mutel.ok ? "ok" : "down"));
 			$("#footer-version").textContent = `accelrd-admin ${h.version}`;
 			$("#footer-uptime").textContent = `uptime ${formatDuration(h.uptime_secs)}`;
 			$("#footer-mutel").textContent = `mutel ${h.mutel_endpoint}`;
@@ -58,8 +58,8 @@
 			if (!h.mutel.ok) banners.push(`mutel unavailable: ${h.mutel.error || "unknown"}`);
 			showBanner(banners.join(" · ") || null);
 		} catch (e) {
-			setStatusPill("status-k8s", null, "k8s: ?");
-			setStatusPill("status-mutel", null, "mutel: ?");
+			setStatusTag("status-k8s", null, "k8s: ?");
+			setStatusTag("status-mutel", null, "mutel: ?");
 			showBanner(`admin self-check failed: ${e.message}`);
 		}
 	}
@@ -95,8 +95,8 @@
 		return `${Math.floor(delta / 86400)}d ago`;
 	}
 
-	function verdictPill(v, source) {
-		if (!v) return `<span class="pill">untested</span>`;
+	function verdictTag(v, source) {
+		if (!v) return `<span class="tag">untested</span>`;
 		const cls = (v === "pass" || v === "ok") ? "ok"
 			: (v === "fail" || v === "error") ? "err"
 			: "warn";
@@ -104,9 +104,36 @@
 		// clear what "ok" means: a real RoCE bandwidth probe (pair), a
 		// single-node loopback ibverbs self-test, or just the preflight
 		// rollup saying the static preconditions held. Plain text inside
-		// the pill — no nested boxes.
-		const tag = source && source !== "pair" ? ` · ${escapeHTML(source)}` : "";
-		return `<span class="pill ${cls}">${escapeHTML(v)}${tag}</span>`;
+		// the tag — no nested boxes.
+		const src = source && source !== "pair" ? ` · ${escapeHTML(source)}` : "";
+		return `<span class="tag ${cls}">${escapeHTML(v)}${src}</span>`;
+	}
+
+	function isFailVerdict(v) {
+		return v === "fail" || v === "error";
+	}
+
+	/// Build an eBay search query from the most populous accelerator on a
+	/// node. Falls back through model → vendor → generic so the link never
+	/// points at an empty search.
+	function scavengeQuery(node) {
+		const models = node.model_counts || {};
+		const modelKeys = Object.keys(models);
+		if (modelKeys.length > 0) {
+			modelKeys.sort((a, b) => (models[b] || 0) - (models[a] || 0));
+			return modelKeys[0];
+		}
+		const vendors = Object.keys(node.vendor_counts || {});
+		if (vendors.length > 0) return vendors.sort().join(" ") + " gpu";
+		return "datacenter accelerator";
+	}
+
+	function scavengeLink(node) {
+		const q = scavengeQuery(node);
+		// _sop=15 sorts by price + shipping ascending — scavenger's choice.
+		const url = `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(q)}&_sop=15`;
+		const tip = `node failed — search eBay for "${q}"`;
+		return `<a class="scavenge-btn" href="${escapeHTML(url)}" target="_blank" rel="noopener noreferrer" title="${escapeHTML(tip)}">scavenge ↗</a>`;
 	}
 
 	function escapeHTML(s) {
@@ -147,20 +174,12 @@
 
 	async function renderCluster(force) {
 		const tbody = $("#nodes-table tbody");
-		const summaryRow = $("#cluster-summary");
-		const fleetRow = $("#fleet-summary");
+		const strip = $("#cluster-strip");
 		try {
 			const [data, fleet] = await Promise.all([loadCluster(force), loadFleet(force)]);
 			const { nodes, summary } = data;
 
-			summaryRow.innerHTML = [
-				summaryCard("Nodes", `${summary.nodes_ready} / ${summary.nodes_total}`, "ready / total"),
-				summaryCard("Racks", String(Object.keys(summary.racks).length), "with topology"),
-				summaryCard("Accelerators", fmtVendorTotals(summary.vendor_totals), "by vendor"),
-				summaryCard("Probe verdicts", fmtVerdictMix(summary.probe_verdicts), "last per node"),
-			].join("");
-
-			fleetRow.innerHTML = renderFleetCards(fleet);
+			strip.innerHTML = renderStatusStrip(summary, fleet);
 
 			if (nodes.length === 0) {
 				tbody.innerHTML = `<tr><td colspan="14" class="placeholder">No nodes (k8s disabled or empty cluster)</td></tr>`;
@@ -172,30 +191,43 @@
 		}
 	}
 
-	function renderFleetCards(fleet) {
+	function renderStatusStrip(summary, fleet) {
+		const cells = [
+			stat("nodes", `${summary.nodes_ready}<span class="dim">/${summary.nodes_total}</span>`),
+			stat("racks", String(Object.keys(summary.racks).length)),
+			stat("accel", fmtVendorTotals(summary.vendor_totals)),
+			stat("verdict", fmtVerdictMixCompact(summary.probe_verdicts)),
+		];
 		if (!fleet || !fleet.available) {
-			return summaryCard("Live fleet", "—",
-				fleet && fleet.error ? `mutel: ${truncate(fleet.error, 60)}` : "mutel unavailable");
+			cells.push(stat("fleet", `<span class="verdict-fail">${escapeHTML(fleet && fleet.error ? truncate(fleet.error, 28) : "unavailable")}</span>`));
+			return cells.join("");
 		}
 		const f = fleet.fleet || {};
-		const vramSub = f.vram_total_bytes > 0
-			? `${fmtBytes(f.vram_used_bytes || 0)} / ${fmtBytes(f.vram_total_bytes)} discrete`
-			: "no discrete cards";
-		const umaSub = f.uma_total_bytes > 0
-			? `${fmtBytes(f.uma_used_bytes || 0)} / ${fmtBytes(f.uma_total_bytes)} unified pool`
-			: "no APUs / iGPUs";
-		const ramSub = f.ram_total_bytes > 0
-			? `${fmtBytes(f.ram_available_bytes || 0)} / ${fmtBytes(f.ram_total_bytes)} available`
-			: "host RAM unknown";
-		return [
-			summaryCard("VRAM (dedicated)", fmtBytes(f.vram_total_bytes || 0), vramSub),
-			summaryCard("UMA (unified)", fmtBytes(f.uma_total_bytes || 0), umaSub),
-			summaryCard("RAM available", fmtBytes(f.ram_available_bytes || 0), ramSub),
-			summaryCard("Disk free", fmtBytes(f.disk_free_bytes || 0), "sum of largest mounts"),
-			summaryCard("Fleet power", fmtPower(f.power_watts || 0), `over ${f.nodes_with_data || 0} nodes`),
-			summaryCard("Hottest accelerator", f.max_temp_c == null ? "—" : `${f.max_temp_c.toFixed(0)}°C`, "max across fleet"),
-			summaryCard("Avg utilization", f.avg_utilization == null ? "—" : `${f.avg_utilization.toFixed(0)}%`, "mean per-node avg"),
-		].join("");
+		cells.push(
+			stat("vram", memPair(f.vram_used_bytes, f.vram_total_bytes)),
+			stat("uma", memPair(f.uma_used_bytes, f.uma_total_bytes)),
+			stat("ram avl", fmtBytesShort(f.ram_available_bytes)),
+			stat("disk free", fmtBytesShort(f.disk_free_bytes)),
+			stat("power", fmtPower(f.power_watts || 0)),
+			stat("temp max", tempCell(f.max_temp_c)),
+			stat("util avg", fmtPercent(f.avg_utilization)),
+		);
+		return cells.join("");
+	}
+
+	function stat(label, value) {
+		return `<div class="stat"><div class="stat-label">${escapeHTML(label)}</div><div class="stat-value">${value}</div></div>`;
+	}
+
+	function memPair(used, total) {
+		if (!total) return "—";
+		return `${fmtBytesShort(used || 0)}<span class="dim">/${fmtBytesShort(total)}</span>`;
+	}
+
+	function tempCell(c) {
+		if (c == null) return "—";
+		const cls = c >= 90 ? "verdict-fail" : c >= 80 ? "verdict-untested" : "verdict-pass";
+		return `<span class="${cls}">${c.toFixed(0)}°C</span>`;
 	}
 
 	function fmtBytes(n) {
@@ -206,6 +238,20 @@
 		while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
 		const sign = n < 0 ? "-" : "";
 		return `${sign}${v.toFixed(v >= 100 ? 0 : v >= 10 ? 1 : 2)} ${units[i]}`;
+	}
+
+	/// Single-letter byte units for the status strip ("23G", "1.2T") —
+	/// terminal-style density. fmtBytes still renders the spaced "23 GiB"
+	/// form for the table cells where there's room.
+	function fmtBytesShort(n) {
+		if (n == null || !isFinite(n) || n === 0) return "—";
+		const units = ["B", "K", "M", "G", "T", "P"];
+		let i = 0;
+		let v = Math.abs(n);
+		while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+		const sign = n < 0 ? "-" : "";
+		const fixed = v >= 100 ? 0 : v >= 10 ? 0 : 1;
+		return `${sign}${v.toFixed(fixed)}${units[i]}`;
 	}
 
 	function fmtPower(w) {
@@ -224,31 +270,35 @@
 		return s.length <= n ? s : s.slice(0, n - 1) + "…";
 	}
 
-	function summaryCard(label, value, sub) {
-		return `<div class="summary-card">
-			<div class="label">${escapeHTML(label)}</div>
-			<div class="value">${value}</div>
-			<div class="sub">${escapeHTML(sub || "")}</div>
-		</div>`;
-	}
-
 	function fmtVendorTotals(totals) {
 		const keys = Object.keys(totals || {}).sort();
 		if (keys.length === 0) return "—";
-		return keys.map((k) => `${totals[k]} ${k}`).join(" · ");
+		return keys.map((k) => `${totals[k]} ${escapeHTML(k)}`).join(" ");
 	}
 
-	function fmtVerdictMix(verdicts) {
-		const keys = Object.keys(verdicts || {});
-		if (keys.length === 0) return "—";
-		return keys.sort().map((k) => `${verdicts[k]} ${k}`).join(" · ");
+	/// Color-coded compact verdict roll-up: "10P 1F 2U" with green/red/
+	/// amber spans. Empty buckets are dropped so an all-pass cluster
+	/// reads as just "12P".
+	function fmtVerdictMixCompact(verdicts) {
+		const groups = { P: 0, F: 0, U: 0 };
+		const cls = { P: "verdict-pass", F: "verdict-fail", U: "verdict-untested" };
+		for (const [k, v] of Object.entries(verdicts || {})) {
+			const key = (k === "pass" || k === "ok") ? "P"
+				: (k === "fail" || k === "error") ? "F" : "U";
+			groups[key] += v;
+		}
+		const parts = [];
+		for (const k of ["P", "F", "U"]) {
+			if (groups[k] > 0) parts.push(`<span class="${cls[k]}">${groups[k]}${k}</span>`);
+		}
+		return parts.length ? parts.join(" ") : "—";
 	}
 
 	function nodeRow(n, live) {
 		const status = n.ready
-			? `<span class="pill ok">ready</span>`
-			: `<span class="pill err">not-ready</span>`;
-		const sched = n.schedulable ? "" : ` <span class="pill warn">cordoned</span>`;
+			? `<span class="tag ok">ready</span>`
+			: `<span class="tag err">not-ready</span>`;
+		const sched = n.schedulable ? "" : ` <span class="tag warn">cordoned</span>`;
 		const probe = n.last_probe || {};
 		const m = live || {};
 		const tempClass = m.temp_c == null ? ""
@@ -268,7 +318,7 @@
 			<td class="mono ${tempClass}">${m.temp_c == null ? "—" : `${m.temp_c.toFixed(0)}°C`}</td>
 			<td class="mono">${fmtPercent(m.utilization)}</td>
 			<td>${escapeHTML(fmtRelative(probe.at))}</td>
-			<td>${verdictPill(probe.verdict, probe.source)}</td>
+			<td>${verdictTag(probe.verdict, probe.source)}${isFailVerdict(probe.verdict) ? scavengeLink(n) : ""}</td>
 			<td>${status}${sched}</td>
 		</tr>`;
 	}
@@ -295,7 +345,7 @@
 				<td class="mono">${escapeHTML(p.partner || "—")}</td>
 				<td>${escapeHTML(p.rack || "—")}</td>
 				<td class="mono">${p.bandwidth_gbps == null ? "—" : p.bandwidth_gbps.toFixed(2)}</td>
-				<td>${verdictPill(p.verdict, p.source)}</td>
+				<td>${verdictTag(p.verdict, p.source)}</td>
 			</tr>`).join("");
 		} catch (e) {
 			tbody.innerHTML = `<tr><td colspan="6" class="placeholder">${escapeHTML(e.message)}</td></tr>`;
@@ -340,15 +390,37 @@
 		}
 	}
 
+	let activeView = "cluster";
+
 	function activate(view) {
+		activeView = view;
 		$$(".view").forEach((v) => v.classList.toggle("active", v.id === `${view}-view`));
 		$$(".nav-link").forEach((a) => a.classList.toggle("active", a.dataset.view === view));
-		switch (view) {
-			case "cluster": renderCluster(false); break;
+		// Show only the navbar command-slot bits relevant to this view.
+		$$(".nav-cmd .cmd-logs, .nav-cmd .cmd-topology").forEach((el) => {
+			el.classList.toggle("hidden", !el.classList.contains(`cmd-${view}`));
+		});
+		runActiveView(false);
+	}
+
+	function runActiveView(force) {
+		switch (activeView) {
+			case "cluster": renderCluster(force); break;
 			case "topology": renderTopology(); break;
-			case "probes": renderProbes(false); break;
+			case "probes": renderProbes(force); break;
 			case "logs": renderLogs(); break;
 		}
+		stampUpdated();
+	}
+
+	function stampUpdated() {
+		const el = $("#cmd-updated");
+		if (!el) return;
+		const t = new Date();
+		const hh = String(t.getHours()).padStart(2, "0");
+		const mm = String(t.getMinutes()).padStart(2, "0");
+		const ss = String(t.getSeconds()).padStart(2, "0");
+		el.textContent = `upd ${hh}:${mm}:${ss}`;
 	}
 
 	function bind() {
@@ -358,11 +430,9 @@
 				activate(a.dataset.view);
 			});
 		});
-		$("#cluster-refresh").addEventListener("click", () => renderCluster(true));
-		$("#probes-refresh").addEventListener("click", () => renderProbes(true));
-		$("#logs-refresh").addEventListener("click", () => renderLogs());
+		$("#global-refresh").addEventListener("click", () => runActiveView(true));
 		$("#log-service").addEventListener("keydown", (e) => {
-			if (e.key === "Enter") renderLogs();
+			if (e.key === "Enter") runActiveView(true);
 		});
 	}
 

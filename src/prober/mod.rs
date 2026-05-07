@@ -28,7 +28,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use crate::config::{env_string, env_u64};
 use crate::exporter;
 
-pub use annotations::ANN_LAST_AT;
+pub use annotations::{ANN_LAST_AT, ANN_LB_LAST_AT};
 
 /// Cluster-scoped controller: pairs same-rack nodes and creates RoCE probe pods.
 #[derive(FromArgs, Debug, Clone)]

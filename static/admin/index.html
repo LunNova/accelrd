@@ -19,9 +19,19 @@
 			<a href="#" class="nav-link" data-view="probes">Probes</a>
 			<a href="#" class="nav-link" data-view="logs">Logs</a>
 		</div>
+		<div class="nav-cmd">
+			<input type="text" id="log-service" class="control-input cmd-logs hidden" placeholder="filter substring">
+			<span class="cmd-topology hidden">
+				<span class="legend"><span class="legend-dot" style="background:var(--success)"></span>healthy</span>
+				<span class="legend"><span class="legend-dot" style="background:var(--warning)"></span>untested</span>
+				<span class="legend"><span class="legend-dot" style="background:var(--error)"></span>failed</span>
+			</span>
+			<span class="cmd-updated" id="cmd-updated"></span>
+			<button id="global-refresh" class="control-btn" title="refresh active view">refresh</button>
+		</div>
 		<div class="nav-status">
-			<span class="status-pill" id="status-k8s">k8s: ?</span>
-			<span class="status-pill" id="status-mutel">mutel: ?</span>
+			<span class="status-tag" id="status-k8s">k8s: ?</span>
+			<span class="status-tag" id="status-mutel">mutel: ?</span>
 		</div>
 	</nav>
 
@@ -29,14 +39,7 @@
 
 	<main class="content">
 		<section id="cluster-view" class="view active">
-			<div class="view-header">
-				<h2>Cluster</h2>
-				<div class="view-controls">
-					<button id="cluster-refresh" class="control-btn">Refresh</button>
-				</div>
-			</div>
-			<div class="summary-row" id="cluster-summary"></div>
-			<div class="summary-row" id="fleet-summary"></div>
+			<div class="status-strip" id="cluster-strip"></div>
 			<div class="table-scroll">
 				<table class="data-table" id="nodes-table">
 					<thead>
@@ -63,26 +66,12 @@
 		</section>
 
 		<section id="topology-view" class="view">
-			<div class="view-header">
-				<h2>Topology</h2>
-				<div class="view-controls">
-					<span class="legend"><span class="legend-dot" style="background:var(--success)"></span>healthy</span>
-					<span class="legend"><span class="legend-dot" style="background:var(--warning)"></span>untested</span>
-					<span class="legend"><span class="legend-dot" style="background:var(--error)"></span>failed</span>
-				</div>
-			</div>
 			<div class="topology-canvas" id="topology-canvas">
 				<p class="placeholder">Loading topology…</p>
 			</div>
 		</section>
 
 		<section id="probes-view" class="view">
-			<div class="view-header">
-				<h2>Probe results</h2>
-				<div class="view-controls">
-					<button id="probes-refresh" class="control-btn">Refresh</button>
-				</div>
-			</div>
 			<div class="table-scroll">
 				<table class="data-table" id="probes-table">
 					<thead>
@@ -101,13 +90,6 @@
 		</section>
 
 		<section id="logs-view" class="view">
-			<div class="view-header">
-				<h2>Recent logs (mutel)</h2>
-				<div class="view-controls">
-					<input type="text" id="log-service" class="control-input" placeholder="filter (search substring)">
-					<button id="logs-refresh" class="control-btn">Refresh</button>
-				</div>
-			</div>
 			<div class="log-container">
 				<div class="log-entries" id="log-entries"><p class="placeholder">Loading…</p></div>
 			</div>
